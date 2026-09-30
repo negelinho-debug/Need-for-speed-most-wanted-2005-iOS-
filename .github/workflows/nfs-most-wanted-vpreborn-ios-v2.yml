@@ -1,4 +1,4 @@
-name: NFS Most Wanted VPREBORN iOS - v3.4 Compile Repair
+name: NFS Most Wanted VPREBORN iOS - v3.5 Path Namespace Repair
 
 on:
   workflow_dispatch:
@@ -36,7 +36,6 @@ jobs:
       xcode_ready: ${{ steps.detect_xcode.outputs.ready }}
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -47,10 +46,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          rm -rf \
-            "$WORK" \
-            "$OUTPUT" \
-            "$GITHUB_WORKSPACE/nfs-build"
+          rm -rf "$WORK" "$OUTPUT" "$GITHUB_WORKSPACE/nfs-build"
 
           mkdir -p \
             "$WORK" \
@@ -64,11 +60,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          sudo apt-get update \
-            -o Acquire::Retries=4
+          sudo apt-get update -o Acquire::Retries=4
 
-          sudo DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ca-certificates \
             curl \
             file \
@@ -124,9 +118,7 @@ jobs:
             if head -c 200 "$FOUND" 2>/dev/null \
               | grep -q 'git-lfs.github.com/spec'
             then
-
               echo "APK is a Git LFS pointer. Pulling LFS..."
-
               git lfs install --local || true
               git lfs pull || true
             fi
@@ -137,11 +129,9 @@ jobs:
             then
               cp "$FOUND" "$APK"
             fi
-
           fi
 
           if [ ! -s "$APK" ]; then
-
             echo "===== SEARCH APK IN GITHUB RELEASES ====="
 
             TAGS="$(
@@ -174,15 +164,11 @@ jobs:
                   | cut -d' ' -f2-
               )"
 
-              if [ -n "${CANDIDATE:-}" ] && \
-                 [ -s "$CANDIDATE" ]
-              then
+              if [ -n "${CANDIDATE:-}" ] && [ -s "$CANDIDATE" ]; then
                 cp "$CANDIDATE" "$APK"
                 break
               fi
-
             done
-
           fi
 
           if [ ! -s "$APK" ]; then
@@ -201,8 +187,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          unzip -oq "$APK" \
-            -d "$APKROOT"
+          unzip -oq "$APK" -d "$APKROOT"
 
           DATA="$APKROOT/assets/bin/Data"
           MANAGED="$DATA/Managed"
@@ -224,20 +209,12 @@ jobs:
             exit 1
           fi
 
-          if find "$APKROOT" \
-            -type f \
-            -name 'libil2cpp.so' \
-            | grep -q .
-          then
+          if find "$APKROOT" -type f -name 'libil2cpp.so' | grep -q .; then
             echo "::error::This workflow expects the Mono VPREBORN APK, not IL2CPP."
             exit 1
           fi
 
-          if ! find "$APKROOT" \
-            -type f \
-            -name 'libmono.so' \
-            | grep -q .
-          then
+          if ! find "$APKROOT" -type f -name 'libmono.so' | grep -q .; then
             echo "::error::libmono.so not found."
             exit 1
           fi
@@ -245,41 +222,28 @@ jobs:
           {
             echo "APK_SIZE=$(stat -c%s "$APK")"
             echo "UNITY_VERSION=$VERSION"
-
-            echo "ASSEMBLY_CSHARP_SIZE=$(
-              stat -c%s "$MANAGED/Assembly-CSharp.dll"
-            )"
-
-            echo "ASSEMBLY_UNITYSCRIPT_SIZE=$(
-              stat -c%s "$MANAGED/Assembly-UnityScript.dll"
-            )"
-
+            echo "ASSEMBLY_CSHARP_SIZE=$(stat -c%s "$MANAGED/Assembly-CSharp.dll")"
+            echo "ASSEMBLY_UNITYSCRIPT_SIZE=$(stat -c%s "$MANAGED/Assembly-UnityScript.dll")"
             echo
             echo "ARCHITECTURES:"
-
             find "$APKROOT/lib" \
               -mindepth 1 \
               -maxdepth 1 \
               -type d \
               -printf '%f\n' \
               | sort || true
-
             echo
             echo "MANAGED DLLS:"
-
             find "$MANAGED" \
               -type f \
               -name '*.dll' \
               -printf '%f  %s bytes\n' \
               | sort
-
             echo
-            echo "SCENES RECORDED IN GLOBALGAMEMANAGERS:"
-
+            echo "SCENES:"
             strings "$DATA/globalgamemanagers" \
               | grep -E 'Assets/.+\.unity$' \
               | sort -u || true
-
           } | tee "$OUTPUT/apk-summary.txt"
 
       - name: Extract original APK icon
@@ -290,7 +254,6 @@ jobs:
           ICON="$APKROOT/res/drawable-xxxhdpi-v4/app_icon.png"
 
           if [ ! -s "$ICON" ]; then
-
             ICON="$(
               find "$APKROOT/res" \
                 -type f \
@@ -300,12 +263,9 @@ jobs:
                 | head -1 \
                 | cut -d' ' -f2-
             )"
-
           fi
 
-          if [ -z "${ICON:-}" ] || \
-             [ ! -s "$ICON" ]
-          then
+          if [ -z "${ICON:-}" ] || [ ! -s "$ICON" ]; then
             echo "::error::Original app_icon.png not found."
             exit 1
           fi
@@ -327,8 +287,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p \
-            "$WORK/tools/assetripper"
+          mkdir -p "$WORK/tools/assetripper"
 
           gh release download 2.0.0 \
             -R AssetRipper/AssetRipper \
@@ -375,42 +334,30 @@ jobs:
           "$RIPPER" \
             --headless \
             --port "$PORT" \
-            > "$OUTPUT/assetripper.log" \
-            2>&1 &
+            > "$OUTPUT/assetripper.log" 2>&1 &
 
           PID=$!
 
-          trap \
-            'kill "$PID" 2>/dev/null || true' \
-            EXIT
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
 
           READY=0
 
           for i in $(seq 1 120); do
-
             if curl -fsS \
               "http://127.0.0.1:${PORT}/" \
-              >/dev/null \
-              2>&1
+              >/dev/null 2>&1
             then
               READY=1
               break
             fi
 
             sleep 1
-
           done
 
           if [ "$READY" -ne 1 ]; then
-
             echo "::error::AssetRipper did not start."
-
-            tail -300 \
-              "$OUTPUT/assetripper.log" \
-              || true
-
+            tail -300 "$OUTPUT/assetripper.log" || true
             exit 1
-
           fi
 
           LOAD_CODE="$(
@@ -424,18 +371,10 @@ jobs:
 
           echo "LOAD_HTTP=$LOAD_CODE"
 
-          if [ "$LOAD_CODE" != "200" ] && \
-             [ "$LOAD_CODE" != "302" ]
-          then
-
+          if [ "$LOAD_CODE" != "200" ] && [ "$LOAD_CODE" != "302" ]; then
             echo "::error::AssetRipper LoadFolder failed."
-
-            cat \
-              "$OUTPUT/assetripper-load-response.txt" \
-              || true
-
+            cat "$OUTPUT/assetripper-load-response.txt" || true
             exit 1
-
           fi
 
           EXPORT_CODE="$(
@@ -450,44 +389,24 @@ jobs:
 
           echo "EXPORT_HTTP=$EXPORT_CODE"
 
-          kill "$PID" \
-            2>/dev/null || true
-
-          wait "$PID" \
-            2>/dev/null || true
-
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
           trap - EXIT
 
-          if [ "$EXPORT_CODE" != "200" ] && \
-             [ "$EXPORT_CODE" != "302" ]
-          then
-
+          if [ "$EXPORT_CODE" != "200" ] && [ "$EXPORT_CODE" != "302" ]; then
             echo "::error::AssetRipper Unity project export failed."
-
-            cat \
-              "$OUTPUT/assetripper-export-response.txt" \
-              || true
-
-            tail -500 \
-              "$OUTPUT/assetripper.log" \
-              || true
-
+            cat "$OUTPUT/assetripper-export-response.txt" || true
+            tail -500 "$OUTPUT/assetripper.log" || true
             exit 1
-
           fi
 
           PROJECT=""
 
           if [ -d "$EXPORT/ExportedProject/Assets" ]; then
-
             PROJECT="$EXPORT/ExportedProject"
-
           elif [ -d "$EXPORT/Assets" ]; then
-
             PROJECT="$EXPORT"
-
           else
-
             PROJECT="$(
               find "$EXPORT" \
                 -type d \
@@ -496,22 +415,12 @@ jobs:
                 | head -1 \
                 | xargs -r dirname
             )"
-
           fi
 
-          if [ -z "$PROJECT" ] || \
-             [ ! -d "$PROJECT/Assets" ]
-          then
-
+          if [ -z "$PROJECT" ] || [ ! -d "$PROJECT/Assets" ]; then
             echo "::error::Recovered Unity project not found."
-
-            find "$EXPORT" \
-              -maxdepth 5 \
-              -type d \
-              | head -300
-
+            find "$EXPORT" -maxdepth 5 -type d | head -300
             exit 1
-
           fi
 
           PROJECT="$(realpath "$PROJECT")"
@@ -524,47 +433,16 @@ jobs:
 
           {
             echo "RECOVERED_PROJECT=$PROJECT"
-
-            echo "SCENES=$(
-              find "$PROJECT/Assets" \
-                -type f \
-                -name '*.unity' \
-                | wc -l \
-                | tr -d ' '
-            )"
-
-            echo "CS_FILES=$(
-              find "$PROJECT/Assets" \
-                -type f \
-                -name '*.cs' \
-                | wc -l \
-                | tr -d ' '
-            )"
-
-            echo "JS_FILES=$(
-              find "$PROJECT/Assets" \
-                -type f \
-                -name '*.js' \
-                | wc -l \
-                | tr -d ' '
-            )"
-
-            echo "DLLS=$(
-              find "$PROJECT/Assets" \
-                -type f \
-                -name '*.dll' \
-                | wc -l \
-                | tr -d ' '
-            )"
-
+            echo "SCENES=$(find "$PROJECT/Assets" -type f -name '*.unity' | wc -l | tr -d ' ')"
+            echo "CS_FILES=$(find "$PROJECT/Assets" -type f -name '*.cs' | wc -l | tr -d ' ')"
+            echo "JS_FILES=$(find "$PROJECT/Assets" -type f -name '*.js' | wc -l | tr -d ' ')"
+            echo "DLLS=$(find "$PROJECT/Assets" -type f -name '*.dll' | wc -l | tr -d ' ')"
             echo
             echo "SCENES:"
-
             find "$PROJECT/Assets" \
               -type f \
               -name '*.unity' \
               | sort
-
           } | tee "$OUTPUT/recovery-summary.txt"
 
       - name: Sanitize recovered Android project
@@ -610,15 +488,8 @@ jobs:
           project = Path(os.environ["PROJECT"])
           assets = project / "Assets"
 
-          moved = (
-              project.parent /
-              "removed-runtime-dlls"
-          )
-
-          moved.mkdir(
-              parents=True,
-              exist_ok=True
-          )
+          moved = project.parent / "removed-runtime-dlls"
+          moved.mkdir(parents=True, exist_ok=True)
 
           runtime_names = {
               "UnityEngine.dll",
@@ -632,28 +503,17 @@ jobs:
           }
 
           cs_count = sum(
-              1
-              for _ in assets.rglob("*.cs")
+              1 for _ in assets.rglob("*.cs")
           )
 
-          user_assemblies = (
-              {
-                  "Assembly-CSharp.dll",
-                  "Assembly-UnityScript.dll",
-              }
-              if cs_count >= 10
-              else set()
-          )
+          user_assemblies = {
+              "Assembly-CSharp.dll",
+              "Assembly-UnityScript.dll",
+          } if cs_count >= 10 else set()
 
-          names = (
-              runtime_names |
-              user_assemblies
-          )
+          names = runtime_names | user_assemblies
 
-          for p in list(
-              assets.rglob("*.dll")
-          ):
-
+          for p in list(assets.rglob("*.dll")):
               if p.name not in names:
                   continue
 
@@ -675,7 +535,6 @@ jobs:
               )
 
               if meta.exists():
-
                   shutil.move(
                       str(meta),
                       str(dst) + ".meta"
@@ -696,9 +555,7 @@ jobs:
             "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" \
             "$PROJECT/Assets/NFSMWiOS/app_icon.png"
 
-          cat > \
-            "$PROJECT/ProjectSettings/ProjectVersion.txt" \
-            <<'EOF'
+          cat > "$PROJECT/ProjectSettings/ProjectVersion.txt" <<'EOF'
           m_EditorVersion: 2017.4.40f1
           m_EditorVersionWithRevision: 2017.4.40f1 (6e14067f8a9a)
           EOF
@@ -741,7 +598,6 @@ jobs:
                   s = p.read_text(
                       encoding="utf-8"
                   )
-
               except UnicodeDecodeError:
                   s = p.read_text(
                       encoding="latin1"
@@ -761,7 +617,6 @@ jobs:
                   s,
                   flags=re.M
               ):
-
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
@@ -774,7 +629,6 @@ jobs:
               )
 
               if s != old:
-
                   p.write_text(
                       s,
                       encoding="utf-8"
@@ -782,26 +636,18 @@ jobs:
 
                   changed.append(
                       str(
-                          p.relative_to(
-                              project
-                          )
+                          p.relative_to(project)
                       )
                   )
 
           report = (
-              Path(
-                  os.environ["OUTPUT"]
-              ) /
+              Path(os.environ["OUTPUT"]) /
               "pre2017-source-repair.txt"
           )
 
           report.write_text(
               "\n".join(changed) +
-              (
-                  "\n"
-                  if changed
-                  else ""
-              ),
+              ("\n" if changed else ""),
               encoding="utf-8"
           )
 
@@ -814,9 +660,7 @@ jobs:
           mkdir -p \
             "$PROJECT/Assets/NFSMWiOS"
 
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/UnityAdsCompatibilityStub.cs" \
-            <<'CS'
+          cat > "$PROJECT/Assets/NFSMWiOS/UnityAdsCompatibilityStub.cs" <<'CS'
           using System;
 
           namespace UnityEngine.Advertisements
@@ -837,18 +681,12 @@ jobs:
               {
                   public static bool isSupported
                   {
-                      get
-                      {
-                          return true;
-                      }
+                      get { return true; }
                   }
 
                   public static bool isInitialized
                   {
-                      get
-                      {
-                          return true;
-                      }
+                      get { return true; }
                   }
 
                   public static bool IsInitialized()
@@ -856,9 +694,7 @@ jobs:
                       return true;
                   }
 
-                  public static void Initialize(
-                      string gameId
-                  )
+                  public static void Initialize(string gameId)
                   {
                   }
 
@@ -924,8 +760,6 @@ jobs:
               }
           }
           CS
-
-          echo "===== PRE-2017 BLOCKER AUDIT ====="
 
           {
             echo "AssemblyInfo files:"
@@ -1023,10 +857,7 @@ jobs:
           set -euo pipefail
 
           CLIENT="$(
-            find \
-              /usr \
-              /opt \
-              "$HOME" \
+            find /usr /opt "$HOME" \
               -type f \
               -name 'Unity.Licensing.Client' \
               2>/dev/null \
@@ -1052,7 +883,6 @@ jobs:
             sudo chmod +x \
               /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client \
               || true
-
           fi
 
           GLOBAL_NODE_MODULES="$(
@@ -1074,11 +904,8 @@ jobs:
           );
 
           async function main() {
-
             const client =
-              new LicensingClient(
-                '6.x'
-              );
+              new LicensingClient('6.x');
 
             await client.Activate(
               {
@@ -1100,7 +927,6 @@ jobs:
           }
 
           main().catch((e) => {
-
             console.error(
               "UNITY PERSONAL ACTIVATION FAILED"
             );
@@ -1112,7 +938,6 @@ jobs:
             );
 
             process.exit(1);
-
           });
           NODE
 
@@ -1148,11 +973,8 @@ jobs:
           )"
 
           if [ -z "$UNITY2017" ]; then
-
             echo "::error::Unity 2017 Editor executable not found."
-
             exit 1
-
           fi
 
           echo "UNITY2017=$UNITY2017" \
@@ -1183,38 +1005,22 @@ jobs:
               os.environ["PROJECT"]
           )
 
-          assets = (
-              project /
-              "Assets"
-          )
+          assets = project / "Assets"
 
           for p in assets.rglob(
               "AssemblyInfo.cs"
           ):
-
               if "Properties" in p.parts:
+                  print("delete", p)
+                  p.unlink(missing_ok=True)
 
-                  print(
-                      "delete",
-                      p
-                  )
-
-                  p.unlink(
-                      missing_ok=True
-                  )
-
-          for p in assets.rglob(
-              "*.cs"
-          ):
+          for p in assets.rglob("*.cs"):
 
               try:
-
                   s = p.read_text(
                       encoding="utf-8"
                   )
-
               except UnicodeDecodeError:
-
                   s = p.read_text(
                       encoding="latin1"
                   )
@@ -1233,7 +1039,6 @@ jobs:
                   s,
                   flags=re.M
               ):
-
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
@@ -1241,23 +1046,18 @@ jobs:
                   )
 
               if s != old:
-
                   p.write_text(
                       s,
                       encoding="utf-8"
                   )
 
-                  print(
-                      "repair",
-                      p
-                  )
+                  print("repair", p)
           PY
 
           python3 -m py_compile \
             "$REPAIR_PY"
 
           run_2017() {
-
             local log="$1"
 
             rm -rf \
@@ -1307,7 +1107,6 @@ jobs:
             'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
             "$LOG1"
           then
-
             echo \
               "Pass 1 has compiler errors. Running repair."
 
@@ -1336,7 +1135,6 @@ jobs:
             FINAL_LOG="$LOG2"
 
           else
-
             cp \
               "$LOG1" \
               "$LOG2"
@@ -1349,7 +1147,6 @@ jobs:
               "$OUTPUT/unity-2017-pass2-errors.txt"
 
             FINAL_LOG="$LOG1"
-
           fi
 
           cp \
@@ -1360,7 +1157,6 @@ jobs:
             'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
             "$FINAL_LOG"
           then
-
             echo \
               "::error::Unity 2017 still has compiler errors."
 
@@ -1372,7 +1168,6 @@ jobs:
               | tail -1000
 
             exit 1
-
           fi
 
           echo \
@@ -1385,12 +1180,9 @@ jobs:
 
           PROJECT="${{ steps.recover.outputs.project }}"
 
-          mkdir -p \
-            "$PROJECT/Packages"
+          mkdir -p "$PROJECT/Packages"
 
-          cat > \
-            "$PROJECT/Packages/manifest.json" \
-            <<'JSON'
+          cat > "$PROJECT/Packages/manifest.json" <<'JSON'
           {
             "dependencies": {
               "com.unity.ugui": "1.0.0",
@@ -1432,9 +1224,7 @@ jobs:
             "$PROJECT/Packages/packages-lock.json" \
             || true
 
-          cat > \
-            "$PROJECT/ProjectSettings/ProjectVersion.txt" \
-            <<'EOF'
+          cat > "$PROJECT/ProjectSettings/ProjectVersion.txt" <<'EOF'
           m_EditorVersion: 2019.4.40f1
           m_EditorVersionWithRevision: 2019.4.40f1 (ffc62b691db5)
           EOF
@@ -1451,10 +1241,7 @@ jobs:
               os.environ["PROJECT"]
           )
 
-          assets = (
-              project /
-              "Assets"
-          )
+          assets = project / "Assets"
 
           output = Path(
               os.environ["OUTPUT"]
@@ -1462,25 +1249,18 @@ jobs:
 
           changed = []
 
-          for p in assets.rglob(
-              "*.cs"
-          ):
+          for p in assets.rglob("*.cs"):
 
               try:
-
                   s = p.read_text(
                       encoding="utf-8"
                   )
-
               except UnicodeDecodeError:
-
                   s = p.read_text(
                       encoding="latin1"
                   )
 
               old = s
-
-              # Old Unity GUI component names.
 
               s = re.sub(
                   r'\bGUIText\b',
@@ -1494,8 +1274,6 @@ jobs:
                   s
               )
 
-              # Old indirect draw names.
-
               s = s.replace(
                   'Graphics.DrawProceduralIndirect(',
                   'Graphics.DrawProceduralIndirectNow('
@@ -1505,10 +1283,6 @@ jobs:
                   'ComputeBufferType.DrawIndirect',
                   'ComputeBufferType.IndirectArguments'
               )
-
-              # UnityScript namespace itself is no longer available
-              # in modern Unity. v3.4 provides the required
-              # Extensions.get_length compatibility class below.
 
               s = re.sub(
                   r'^\s*using\s+UnityScript\s*;\s*$',
@@ -1524,21 +1298,16 @@ jobs:
                   flags=re.M
               )
 
-              # Debug ambiguity.
-
               if re.search(
                   r'^\s*using\s+System\.Diagnostics\s*;',
                   s,
                   flags=re.M
               ):
-
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
                       s
                   )
-
-              # Android-only namespaces.
 
               s = re.sub(
                   r'^\s*using\s+UnityEngine\.Android\s*;\s*$',
@@ -1552,22 +1321,15 @@ jobs:
                   'UnityEngine.Advertisements'
               )
 
-              # RCC old ParticleRenderer no longer exists
-              # in Unity 2019. ParticleSystemRenderer is the
-              # modern replacement used by the same RCC checks.
-
               if p.name in {
                   "RCC_CameraConfig.cs",
                   "RCC_GetBounds.cs",
               }:
-
                   s = re.sub(
                       r'\bParticleRenderer\b',
                       'ParticleSystemRenderer',
                       s
                   )
-
-              # Old scene-loading API.
 
               s = s.replace(
                   'Application.LoadLevelAsync(',
@@ -1590,7 +1352,6 @@ jobs:
               )
 
               if s != old:
-
                   p.write_text(
                       s,
                       encoding="utf-8"
@@ -1598,9 +1359,7 @@ jobs:
 
                   changed.append(
                       str(
-                          p.relative_to(
-                              project
-                          )
+                          p.relative_to(project)
                       )
                   )
 
@@ -1611,11 +1370,7 @@ jobs:
 
           report.write_text(
               "\n".join(changed) +
-              (
-                  "\n"
-                  if changed
-                  else ""
-              ),
+              ("\n" if changed else ""),
               encoding="utf-8"
           )
 
@@ -1626,20 +1381,12 @@ jobs:
 
           for x in changed:
               print("  ", x)
-
           PY
 
           mkdir -p \
             "$PROJECT/Assets/NFSMWiOS/Editor"
 
-          # Compatibility replacement for UnityScript.Lang.Extensions.
-          # The recovered SimpleMeshCombine.cs uses Extensions.get_length().
-          # We only implement the old length behavior that the recovered
-          # project actually needs.
-
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/UnityScriptExtensionsCompatibility.cs" \
-            <<'CS'
+          cat > "$PROJECT/Assets/NFSMWiOS/UnityScriptExtensionsCompatibility.cs" <<'CS'
           using System;
           using System.Collections;
 
@@ -1705,9 +1452,7 @@ jobs:
           }
           CS
 
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" \
-            <<'CS'
+          cat > "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" <<'CS'
           using System;
           using System.IO;
 
@@ -1853,13 +1598,8 @@ jobs:
                   LogType type
               )
               {
-                  if (
-                      type ==
-                      LogType.Log
-                  )
-                  {
+                  if (type == LogType.Log)
                       return;
-                  }
 
                   Write(
                       "[" +
@@ -1893,9 +1633,7 @@ jobs:
           }
           CS
 
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" \
-            <<'CS'
+          cat > "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" <<'CS'
           using System;
           using System.IO;
           using System.Linq;
@@ -1916,11 +1654,7 @@ jobs:
                           "NFS_IOS_XCODE_PATH"
                       );
 
-                  if (
-                      String.IsNullOrEmpty(
-                          output
-                      )
-                  )
+                  if (String.IsNullOrEmpty(output))
                   {
                       throw new Exception(
                           "NFS_IOS_XCODE_PATH is missing."
@@ -2032,10 +1766,7 @@ jobs:
                           .Distinct()
                           .ToArray();
 
-                  if (
-                      allScenes.Length ==
-                      0
-                  )
+                  if (allScenes.Length == 0)
                   {
                       throw new Exception(
                           "No recovered Unity scenes were found."
@@ -2061,7 +1792,7 @@ jobs:
                           allScenes
                               .FirstOrDefault(
                                   p =>
-                                      Path
+                                      System.IO.Path
                                           .GetFileNameWithoutExtension(
                                               p
                                           )
@@ -2073,40 +1804,22 @@ jobs:
                               );
 
                       if (
-                          !String
-                              .IsNullOrEmpty(
-                                  match
-                              ) &&
-                          !ordered
-                              .Contains(
-                                  match
-                              )
+                          !String.IsNullOrEmpty(match) &&
+                          !ordered.Contains(match)
                       )
                       {
-                          ordered.Add(
-                              match
-                          );
+                          ordered.Add(match);
                       }
                   }
 
                   foreach (
                       string scene
-                      in allScenes
-                          .OrderBy(
-                              x => x
-                          )
+                      in allScenes.OrderBy(x => x)
                   )
                   {
-                      if (
-                          !ordered
-                              .Contains(
-                                  scene
-                              )
-                      )
+                      if (!ordered.Contains(scene))
                       {
-                          ordered.Add(
-                              scene
-                          );
+                          ordered.Add(scene);
                       }
                   }
 
@@ -2119,9 +1832,7 @@ jobs:
                       in ordered
                   )
                   {
-                      Debug.Log(
-                          scene
-                      );
+                      Debug.Log(scene);
                   }
 
                   var options =
@@ -2141,10 +1852,9 @@ jobs:
                       };
 
                   BuildReport report =
-                      BuildPipeline
-                          .BuildPlayer(
-                              options
-                          );
+                      BuildPipeline.BuildPlayer(
+                          options
+                      );
 
                   BuildSummary summary =
                       report.summary;
@@ -2184,49 +1894,36 @@ jobs:
                   );
 
                   var importer =
-                      AssetImporter
-                          .GetAtPath(
-                              iconPath
-                          )
-                      as TextureImporter;
+                      AssetImporter.GetAtPath(
+                          iconPath
+                      ) as TextureImporter;
 
-                  if (
-                      importer != null
-                  )
+                  if (importer != null)
                   {
                       importer.textureType =
-                          TextureImporterType
-                              .Default;
+                          TextureImporterType.Default;
 
-                      importer
-                          .alphaIsTransparency =
+                      importer.alphaIsTransparency =
                           true;
 
-                      importer
-                          .mipmapEnabled =
+                      importer.mipmapEnabled =
                           false;
 
-                      importer
-                          .textureCompression =
+                      importer.textureCompression =
                           TextureImporterCompression
                               .Uncompressed;
 
-                      importer
-                          .SaveAndReimport();
+                      importer.SaveAndReimport();
                   }
 
                   Texture2D icon =
-                      AssetDatabase
-                          .LoadAssetAtPath<
-                              Texture2D
-                          >(
-                              iconPath
-                          );
+                      AssetDatabase.LoadAssetAtPath<
+                          Texture2D
+                      >(
+                          iconPath
+                      );
 
-                  if (
-                      icon ==
-                      null
-                  )
+                  if (icon == null)
                   {
                       Debug.LogWarning(
                           "Original APK icon could not be loaded."
@@ -2252,8 +1949,7 @@ jobs:
                       i++
                   )
                   {
-                      icons[i] =
-                          icon;
+                      icons[i] = icon;
                   }
 
                   PlayerSettings
@@ -2270,7 +1966,7 @@ jobs:
             "$OUTPUT/packages-manifest.json"
 
           echo \
-            "===== v3.4 PATCH AUDIT ====="
+            "===== v3.5 PATCH AUDIT ====="
 
           {
             echo "ParticleRenderer leftovers:"
@@ -2291,38 +1987,36 @@ jobs:
               || true
 
             echo
-            echo "Runtime logger Path.Combine:"
+            echo "Runtime logger System.IO.Path.Combine:"
 
             grep -n \
-              'Path.Combine' \
+              'System.IO.Path.Combine' \
               "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" \
               || true
 
+            echo
+            echo "Build script System.IO.Path.GetFileNameWithoutExtension:"
+
+            grep -n \
+              'System.IO.Path' \
+              "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" \
+              || true
+
           } | tee \
-            "$OUTPUT/v3.4-compile-repair-audit.txt"
+            "$OUTPUT/v3.5-compile-repair-audit.txt"
 
       - name: Install official Unity CLI
         shell: bash
         run: |
           set -euo pipefail
 
-          export \
-            UNITY_CLI_HOME="$WORK/tools/unity-official-cli"
+          export UNITY_CLI_HOME="$WORK/tools/unity-official-cli"
+          export UNITY_CLI_CHANNEL="beta"
+          export UNITY_NON_INTERACTIVE=1
+          export UNITY_NO_CONSENT_PROMPT=1
+          export UNITY_NO_UPDATE_CHECK=1
 
-          export \
-            UNITY_CLI_CHANNEL="beta"
-
-          export \
-            UNITY_NON_INTERACTIVE=1
-
-          export \
-            UNITY_NO_CONSENT_PROMPT=1
-
-          export \
-            UNITY_NO_UPDATE_CHECK=1
-
-          mkdir -p \
-            "$UNITY_CLI_HOME"
+          mkdir -p "$UNITY_CLI_HOME"
 
           curl -fsSL \
             --retry 5 \
@@ -2335,8 +2029,7 @@ jobs:
 
           OFFICIAL="$UNITY_CLI_HOME/bin/unity"
 
-          test -x \
-            "$OFFICIAL"
+          test -x "$OFFICIAL"
 
           echo \
             "OFFICIAL_UNITY_CLI=$OFFICIAL" \
@@ -2352,20 +2045,12 @@ jobs:
 
           INSTALL_ROOT="$HOME/UnityEditors"
 
-          mkdir -p \
-            "$INSTALL_ROOT"
+          mkdir -p "$INSTALL_ROOT"
 
-          export \
-            UNITY_NON_INTERACTIVE=1
-
-          export \
-            UNITY_NO_CONSENT_PROMPT=1
-
-          export \
-            UNITY_NO_UPDATE_CHECK=1
-
-          export \
-            UNITY_INSTALL_RETRIES=3
+          export UNITY_NON_INTERACTIVE=1
+          export UNITY_NO_CONSENT_PROMPT=1
+          export UNITY_NO_UPDATE_CHECK=1
+          export UNITY_INSTALL_RETRIES=3
 
           "$OFFICIAL_UNITY_CLI" \
             --non-interactive \
@@ -2395,13 +2080,11 @@ jobs:
               -path '*/Editor/Unity' \
               -perm -111 \
               -print \
-              | grep \
-                '2019.4.40f1' \
+              | grep '2019.4.40f1' \
               | head -1
           )"
 
           if [ -z "${UNITY2019:-}" ]; then
-
             UNITY2019="$(
               find "$INSTALL_ROOT" \
                 -type f \
@@ -2410,16 +2093,11 @@ jobs:
                 -print \
                 | head -1
             )"
-
           fi
 
           if [ -z "$UNITY2019" ]; then
-
-            echo \
-              "::error::Unity 2019 Editor executable not found."
-
+            echo "::error::Unity 2019 Editor executable not found."
             exit 1
-
           fi
 
           echo \
@@ -2437,24 +2115,17 @@ jobs:
           )"
 
           {
-            echo \
-              "UNITY2019=$UNITY2019"
-
-            echo \
-              "UNITY2019_DIR=$UNITY2019_DIR"
-
+            echo "UNITY2019=$UNITY2019"
+            echo "UNITY2019_DIR=$UNITY2019_DIR"
             echo
-
-            echo \
-              "iOSSupport paths:"
+            echo "iOSSupport paths:"
 
             find "$UNITY2019_DIR" \
               -maxdepth 10 \
               -path '*iOSSupport*' \
               -print \
               2>/dev/null \
-              | sed -n \
-                '1,300p' \
+              | sed -n '1,300p' \
               || true
 
           } | tee \
@@ -2468,32 +2139,25 @@ jobs:
           MISSING="$(
             ldd "$UNITY2019" \
               2>/dev/null \
-              | grep \
-                'not found' \
+              | grep 'not found' \
               || true
           )"
 
           if [ -n "$MISSING" ]; then
-
-            echo \
-              "::error::Unity 2019 is missing Linux shared libraries:"
-
+            echo "::error::Unity 2019 is missing Linux shared libraries:"
             echo "$MISSING"
-
             exit 1
-
           fi
 
           echo \
             "Unity 2019 direct shared-library check passed."
 
-      - name: Unity 2019 warm-up import and post-migration UnityScript repair
+      - name: Unity 2019 warm-up import and post-migration repair
         shell: bash
         run: |
           set +e
 
           PROJECT="${{ steps.recover.outputs.project }}"
-
           WARMUP_LOG="$OUTPUT/unity-2019-warmup.log"
 
           rm -rf \
@@ -2544,10 +2208,7 @@ jobs:
               os.environ["PROJECT"]
           )
 
-          assets = (
-              project /
-              "Assets"
-          )
+          assets = project / "Assets"
 
           output = Path(
               os.environ["OUTPUT"]
@@ -2562,31 +2223,23 @@ jobs:
           changed = []
           removed_total = 0
 
-          for p in assets.rglob(
-              "*.cs"
-          ):
+          for p in assets.rglob("*.cs"):
 
               try:
-
                   s = p.read_text(
                       encoding="utf-8"
                   )
-
               except UnicodeDecodeError:
-
                   s = p.read_text(
                       encoding="latin1"
                   )
 
-              fixed, count = (
-                  using_rx.subn(
-                      "",
-                      s
-                  )
+              fixed, count = using_rx.subn(
+                  "",
+                  s
               )
 
               if count:
-
                   p.write_text(
                       fixed,
                       encoding="utf-8"
@@ -2595,9 +2248,7 @@ jobs:
                   changed.append(
                       (
                           str(
-                              p.relative_to(
-                                  project
-                              )
+                              p.relative_to(project)
                           ),
                           count
                       )
@@ -2607,9 +2258,7 @@ jobs:
 
                   print(
                       "repaired",
-                      p.relative_to(
-                          project
-                      ),
+                      p.relative_to(project),
                       "removed=",
                       count
                   )
@@ -2621,20 +2270,14 @@ jobs:
 
           report.write_text(
               "removed_total=" +
-              str(
-                  removed_total
-              ) +
+              str(removed_total) +
               "\n" +
               "\n".join(
                   f"{path}: {count}"
                   for path, count
                   in changed
               ) +
-              (
-                  "\n"
-                  if changed
-                  else ""
-              ),
+              ("\n" if changed else ""),
               encoding="utf-8"
           )
 
@@ -2655,35 +2298,27 @@ jobs:
                   target.read_text(
                       encoding="utf-8",
                       errors="replace"
-                  )
-                  .splitlines()[:100],
+                  ).splitlines()[:100],
                   1
               ):
-
                   print(
                       f"{i:03d}: {line}"
                   )
 
           leftovers = []
 
-          for p in assets.rglob(
-              "*.cs"
-          ):
+          for p in assets.rglob("*.cs"):
 
               text = p.read_text(
                   encoding="utf-8",
                   errors="replace"
               )
 
-              if using_rx.search(
-                  text
-              ):
+              if using_rx.search(text):
 
                   leftovers.append(
                       str(
-                          p.relative_to(
-                              project
-                          )
+                          p.relative_to(project)
                       )
                   )
 
@@ -2694,11 +2329,7 @@ jobs:
               )
 
               for x in leftovers:
-
-                  print(
-                      "  ",
-                      x
-                  )
+                  print("  ", x)
 
               raise SystemExit(1)
 
@@ -2718,8 +2349,8 @@ jobs:
               "$OUTPUT/post2019-unityscript-references.txt" \
             || true
 
-          # Re-run v3.4 RCC patch after Unity's migration pass
-          # in case the importer touched those files.
+          echo \
+            "===== POST-MIGRATION RCC REPAIR ====="
 
           python3 - <<'PY'
           import os
@@ -2730,10 +2361,7 @@ jobs:
               os.environ["PROJECT"]
           )
 
-          assets = (
-              project /
-              "Assets"
-          )
+          assets = project / "Assets"
 
           patched = []
 
@@ -2742,9 +2370,7 @@ jobs:
               "RCC_GetBounds.cs",
           ):
 
-              for p in assets.rglob(
-                  name
-              ):
+              for p in assets.rglob(name):
 
                   text = p.read_text(
                       encoding="utf-8",
@@ -2766,9 +2392,7 @@ jobs:
 
                       patched.append(
                           str(
-                              p.relative_to(
-                                  project
-                              )
+                              p.relative_to(project)
                           )
                       )
 
@@ -2787,7 +2411,7 @@ jobs:
             "$PROJECT/obj" \
             2>/dev/null || true
 
-      - name: v3.4 final compile blocker audit
+      - name: v3.5 final compile blocker audit
         shell: bash
         run: |
           set -euo pipefail
@@ -2795,7 +2419,7 @@ jobs:
           PROJECT="${{ steps.recover.outputs.project }}"
 
           echo \
-            "===== v3.4 FINAL COMPILE BLOCKER AUDIT ====="
+            "===== v3.5 FINAL COMPILE BLOCKER AUDIT ====="
 
           {
             echo \
@@ -2828,7 +2452,7 @@ jobs:
 
             echo
             echo \
-              "4. Compatibility class"
+              "4. Extensions compatibility class"
 
             grep -n \
               'class Extensions' \
@@ -2837,15 +2461,24 @@ jobs:
 
             echo
             echo \
-              "5. Runtime logger Path"
+              "5. Logger System.IO.Path"
 
             grep -n \
-              'Path.Combine' \
+              'System.IO.Path' \
               "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" \
               || true
 
+            echo
+            echo \
+              "6. Build script System.IO.Path"
+
+            grep -n \
+              'System.IO.Path' \
+              "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" \
+              || true
+
           } | tee \
-            "$OUTPUT/v3.4-final-compile-audit.txt"
+            "$OUTPUT/v3.5-final-compile-audit.txt"
 
           if grep -RIn \
             --include='*.cs' \
@@ -2853,9 +2486,8 @@ jobs:
             "$PROJECT/Assets/Scripts/Assembly-CSharp" \
             >/dev/null
           then
-
             echo \
-              "::error::ParticleRenderer still exists after v3.4 repair."
+              "::error::ParticleRenderer still exists after v3.5 repair."
 
             grep -RIn \
               --include='*.cs' \
@@ -2864,11 +2496,19 @@ jobs:
               || true
 
             exit 1
+          fi
 
+          if ! grep -q \
+            'System.IO.Path' \
+            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs"
+          then
+            echo \
+              "::error::System.IO.Path repair is missing from NFSMWiOSBuild.cs."
+            exit 1
           fi
 
           echo \
-            "v3.4 final compile blocker audit: CLEAN"
+            "v3.5 final compile blocker audit: CLEAN"
 
       - name: Build NFS Most Wanted iOS Xcode project
         id: unity_build
@@ -2879,7 +2519,6 @@ jobs:
           set +e
 
           PROJECT="${{ steps.recover.outputs.project }}"
-
           LOG="$OUTPUT/unity-2019-ios-build.log"
 
           rm -rf \
@@ -2889,7 +2528,7 @@ jobs:
             2>/dev/null || true
 
           echo \
-            "===== NFS MOST WANTED VPREBORN iOS v3.4 ====="
+            "===== NFS MOST WANTED VPREBORN iOS v3.5 ====="
 
           echo \
             "Source editor: $SOURCE_UNITY"
@@ -2907,19 +2546,17 @@ jobs:
             "Xcode output: $NFS_IOS_XCODE_PATH"
 
           echo \
-            "===== FINAL UNITYSCRIPT USING-DIRECTIVE CHECK ====="
+            "===== FINAL UNITYSCRIPT CHECK ====="
 
           if grep -RIn \
             --include='*.cs' \
             -E '^[[:space:]]*using[[:space:]]+UnityScript([.;]|[[:space:]])' \
             "$PROJECT/Assets"
           then
-
             echo \
               "::error::UnityScript using directive came back before final build."
 
             exit 1
-
           fi
 
           echo \
@@ -2933,16 +2570,28 @@ jobs:
             '\bParticleRenderer\b' \
             "$PROJECT/Assets/Scripts/Assembly-CSharp"
           then
-
             echo \
               "::error::Legacy ParticleRenderer came back."
 
             exit 1
-
           fi
 
           echo \
             "ParticleRenderer check: CLEAN"
+
+          echo \
+            "===== FINAL PATH NAMESPACE CHECK ====="
+
+          grep -n \
+            'System.IO.Path' \
+            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" \
+            || {
+              echo "::error::System.IO.Path not found in build script."
+              exit 1
+            }
+
+          echo \
+            "Path namespace check: CLEAN"
 
           timeout 100m \
             xvfb-run -a \
@@ -3003,9 +2652,7 @@ jobs:
                \) \
                | grep -q .
           then
-
             READY=true
-
           fi
 
           echo \
@@ -3013,13 +2660,10 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
           {
-            echo \
-              "XCODE_READY=$READY"
-
+            echo "XCODE_READY=$READY"
             echo
 
             if [ -d "$XCODE_OUT" ]; then
-
               find "$XCODE_OUT" \
                 -maxdepth 3 \
                 \( \
@@ -3028,7 +2672,6 @@ jobs:
                   -o -name 'Info.plist' \
                 \) \
                 -print
-
             fi
 
           } | tee \
@@ -3043,11 +2686,11 @@ jobs:
           tar \
             -C "$(dirname "$XCODE_OUT")" \
             -czf \
-              "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-Xcode.tar.gz" \
+              "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-Xcode.tar.gz" \
             "$(basename "$XCODE_OUT")"
 
           ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-Xcode.tar.gz"
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-Xcode.tar.gz"
 
       - name: Collect Unity diagnostics
         if: always()
@@ -3055,217 +2698,78 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.4-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.5-Diagnostics"
 
           rm -rf "$DIAG"
-
           mkdir -p "$DIAG"
 
-          cp \
-            "$OUTPUT/apk-sha256.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
+          cp "$OUTPUT/apk-sha256.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/apk-summary.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/original-icon-sha256.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/assetripper.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/recovery-summary.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/removed-android-files.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/removed-assemblyinfo.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/pre2017-source-repair.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/pre2017-known-blockers.txt" "$DIAG/" 2>/dev/null || true
 
-          cp \
-            "$OUTPUT/apk-summary.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
+          cp "$OUTPUT/unity-2017-migration-pass1.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-migration-pass2.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass1-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass2-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass1-errors.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass2-errors.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-migration.log" "$DIAG/" 2>/dev/null || true
 
-          cp \
-            "$OUTPUT/original-icon-sha256.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
+          cp "$OUTPUT/source-patches.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/packages-manifest.json" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/v3.5-compile-repair-audit.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/v3.5-final-compile-audit.txt" "$DIAG/" 2>/dev/null || true
 
-          cp \
-            "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/assetripper.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/recovery-summary.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/removed-android-files.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/removed-assemblyinfo.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/pre2017-source-repair.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/pre2017-known-blockers.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-migration-pass1.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-migration-pass2.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-pass1-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-pass2-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-pass1-errors.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-pass2-errors.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-migration.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/source-patches.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/packages-manifest.json" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/v3.4-compile-repair-audit.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/v3.4-final-compile-audit.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-install.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-ios-module-audit.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-warmup.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-warmup-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/post2019-unityscript-repair.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/post2019-unityscript-references.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-ios-build.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-important-errors.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/xcode-detection.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
+          cp "$OUTPUT/unity-2019-install.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-ios-module-audit.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-warmup.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-warmup-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/post2019-unityscript-repair.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/post2019-unityscript-references.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-ios-build.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-important-errors.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/xcode-detection.txt" "$DIAG/" 2>/dev/null || true
 
           {
-            echo \
-              "===== ENV ====="
-
-            echo \
-              "SOURCE_UNITY=$SOURCE_UNITY"
-
-            echo \
-              "MIGRATION_UNITY=$MIGRATION_UNITY"
-
-            echo \
-              "BUILD_UNITY=$BUILD_UNITY"
-
+            echo "===== ENV ====="
+            echo "SOURCE_UNITY=$SOURCE_UNITY"
+            echo "MIGRATION_UNITY=$MIGRATION_UNITY"
+            echo "BUILD_UNITY=$BUILD_UNITY"
             echo
 
-            echo \
-              "===== DISK ====="
-
+            echo "===== DISK ====="
             df -h
-
             echo
 
-            echo \
-              "===== PROJECT SUMMARY ====="
+            echo "===== PROJECT SUMMARY ====="
 
-            if [ -n "${PROJECT:-}" ] && \
-               [ -d "${PROJECT:-}" ]
-            then
-
+            if [ -n "${PROJECT:-}" ] && [ -d "${PROJECT:-}" ]; then
               find "$PROJECT/Assets" \
                 -type f \
                 -name '*.unity' \
                 | sort
-
             fi
 
-          } > \
-            "$DIAG/environment.txt" \
-            2>&1 || true
+          } > "$DIAG/environment.txt" 2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload NFS diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.4-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.4-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.5-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.5-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
 
@@ -3273,8 +2777,8 @@ jobs:
         if: steps.detect_xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.4-Xcode
-          path: NFS-MW-VPREBORN-iOS-v3.4-Xcode.tar.gz
+          name: NFS-MW-VPREBORN-iOS-v3.5-Xcode
+          path: NFS-MW-VPREBORN-iOS-v3.5-Xcode.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -3283,9 +2787,10 @@ jobs:
         shell: bash
         run: |
           echo \
-            "::error::Unity did not generate the iOS Xcode project. Check NFS-MW-VPREBORN-iOS-v3.4-Diagnostics."
+            "::error::Unity did not generate the iOS Xcode project. Check NFS-MW-VPREBORN-iOS-v3.5-Diagnostics."
 
           exit 1
+
 
   xcode_build:
     name: 2. Build unsigned IPA on macOS
@@ -3295,11 +2800,10 @@ jobs:
     timeout-minutes: 120
 
     steps:
-
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.4-Xcode
+          name: NFS-MW-VPREBORN-iOS-v3.5-Xcode
           path: xcode-artifact
 
       - name: Extract Xcode project
@@ -3307,14 +2811,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p \
-            xcode
+          mkdir -p xcode
 
           tar \
             -xzf \
-              xcode-artifact/NFS-MW-VPREBORN-iOS-v3.4-Xcode.tar.gz \
-            -C \
-              xcode
+              xcode-artifact/NFS-MW-VPREBORN-iOS-v3.5-Xcode.tar.gz \
+            -C xcode
 
           find xcode \
             -maxdepth 4 \
@@ -3338,17 +2840,11 @@ jobs:
           )"
 
           if [ -z "$PBX" ]; then
-
-            echo \
-              "::error::project.pbxproj not found."
-
+            echo "::error::project.pbxproj not found."
             exit 1
-
           fi
 
-          python3 \
-            - "$PBX" \
-            <<'PY'
+          python3 - "$PBX" <<'PY'
           import pathlib
           import re
           import sys
@@ -3456,11 +2952,9 @@ jobs:
 
           else
 
-            echo \
-              "::error::No Xcode workspace/project found."
+            echo "::error::No Xcode workspace/project found."
 
             RC=1
-
           fi
 
           echo \
@@ -3489,9 +2983,7 @@ jobs:
           )"
 
           if [ -z "$APP" ]; then
-
-            echo \
-              "::error::Built .app was not found."
+            echo "::error::Built .app was not found."
 
             find \
               "$GITHUB_WORKSPACE/DerivedData" \
@@ -3501,25 +2993,21 @@ jobs:
               -print
 
             exit 1
-
           fi
 
-          rm -rf \
-            Payload
-
-          mkdir -p \
-            Payload
+          rm -rf Payload
+          mkdir -p Payload
 
           cp -R \
             "$APP" \
             Payload/
 
           zip -qry \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-unsigned.ipa" \
             Payload
 
           ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-unsigned.ipa"
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-unsigned.ipa"
 
       - name: Collect Xcode diagnostics
         if: always()
@@ -3527,10 +3015,9 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.4-Xcode-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.5-Xcode-Diagnostics"
 
           rm -rf "$DIAG"
-
           mkdir -p "$DIAG"
 
           cp \
@@ -3553,15 +3040,15 @@ jobs:
             2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.4-Xcode-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.5-Xcode-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload unsigned IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.4-unsigned-IPA
-          path: NFS-MW-VPREBORN-iOS-v3.4-unsigned.ipa
+          name: NFS-MW-VPREBORN-iOS-v3.5-unsigned-IPA
+          path: NFS-MW-VPREBORN-iOS-v3.5-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -3569,7 +3056,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.4-Xcode-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.4-Xcode-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.5-Xcode-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.5-Xcode-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
