@@ -1,4 +1,4 @@
-name: NFS Most Wanted VPREBORN iOS - v3.2 Post-Migration UnityScript Repair
+name: NFS Most Wanted VPREBORN iOS - v3.3 Safe iOS Module Audit + UnityScript Repair
 
 on:
   workflow_dispatch:
@@ -1642,12 +1642,15 @@ jobs:
             echo "UNITY2019_DIR=$UNITY2019_DIR"
             echo
             echo "iOSSupport paths:"
+
             find "$UNITY2019_DIR" \
-              -path '*iOSSupport*' \
               -maxdepth 10 \
+              -path '*iOSSupport*' \
               -print \
               2>/dev/null \
-              | head -300
+              | sed -n '1,300p' \
+              || true
+
           } | tee "$OUTPUT/unity-2019-ios-module-audit.txt"
 
       - name: Verify Unity 2019 runtime dependencies
@@ -1855,7 +1858,7 @@ jobs:
             "$PROJECT/obj" \
             2>/dev/null || true
 
-          echo "===== NFS MOST WANTED VPREBORN iOS v3.2 ====="
+          echo "===== NFS MOST WANTED VPREBORN iOS v3.3 ====="
           echo "Source editor: $SOURCE_UNITY"
           echo "Migration editor: $MIGRATION_UNITY"
           echo "Build editor: $BUILD_UNITY"
@@ -1947,11 +1950,11 @@ jobs:
 
           tar \
             -C "$(dirname "$XCODE_OUT")" \
-            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz" \
+            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-Xcode.tar.gz" \
             "$(basename "$XCODE_OUT")"
 
           ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz"
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-Xcode.tar.gz"
 
       - name: Collect Unity diagnostics
         if: always()
@@ -1959,7 +1962,7 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.2-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.3-Diagnostics"
 
           rm -rf "$DIAG"
           mkdir -p "$DIAG"
@@ -2016,15 +2019,15 @@ jobs:
           } > "$DIAG/environment.txt" 2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload NFS diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.2-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.2-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.3-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.3-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
 
@@ -2032,8 +2035,8 @@ jobs:
         if: steps.detect_xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode
-          path: NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz
+          name: NFS-MW-VPREBORN-iOS-v3.3-Xcode
+          path: NFS-MW-VPREBORN-iOS-v3.3-Xcode.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -2041,7 +2044,7 @@ jobs:
         if: steps.detect_xcode.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::error::Unity did not generate the iOS Xcode project. Check NFS-MW-VPREBORN-iOS-v3.2-Diagnostics."
+          echo "::error::Unity did not generate the iOS Xcode project. Check NFS-MW-VPREBORN-iOS-v3.3-Diagnostics."
           exit 1
 
   xcode_build:
@@ -2055,7 +2058,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode
+          name: NFS-MW-VPREBORN-iOS-v3.3-Xcode
           path: xcode-artifact
 
       - name: Extract Xcode project
@@ -2066,7 +2069,7 @@ jobs:
           mkdir -p xcode
 
           tar \
-            -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz \
+            -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v3.3-Xcode.tar.gz \
             -C xcode
 
           find xcode \
@@ -2237,11 +2240,11 @@ jobs:
             Payload/
 
           zip -qry \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-unsigned.ipa" \
             Payload
 
           ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa"
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-unsigned.ipa"
 
       - name: Collect Xcode diagnostics
         if: always()
@@ -2249,7 +2252,7 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.2-Xcode-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.3-Xcode-Diagnostics"
 
           rm -rf "$DIAG"
 
@@ -2274,15 +2277,15 @@ jobs:
             2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.3-Xcode-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload unsigned IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.2-unsigned-IPA
-          path: NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa
+          name: NFS-MW-VPREBORN-iOS-v3.3-unsigned-IPA
+          path: NFS-MW-VPREBORN-iOS-v3.3-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -2290,7 +2293,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.3-Xcode-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.3-Xcode-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
