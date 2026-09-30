@@ -1,4 +1,4 @@
-name: NFS Most Wanted VPREBORN iOS - v3.1 Heredoc Fix + Original Icon
+name: NFS Most Wanted VPREBORN iOS - v3.2 Post-Migration UnityScript Repair
 
 on:
   workflow_dispatch:
@@ -45,7 +45,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           rm -rf "$WORK" "$OUTPUT" "$GITHUB_WORKSPACE/nfs-build"
+
           mkdir -p \
             "$WORK" \
             "$APKROOT" \
@@ -85,6 +87,7 @@ jobs:
             libdrm2 \
             libgbm1 \
             p7zip-full \
+            python3 \
             unzip \
             xz-utils \
             xvfb \
@@ -98,6 +101,7 @@ jobs:
           set -euo pipefail
 
           echo "===== SEARCH APK IN REPOSITORY ====="
+
           FOUND="$(
             find "$GITHUB_WORKSPACE" \
               -type f \
@@ -116,19 +120,22 @@ jobs:
               git lfs pull || true
             fi
 
-            if [ -s "$FOUND" ] && ! head -c 200 "$FOUND" 2>/dev/null | grep -q 'git-lfs.github.com/spec'; then
+            if [ -s "$FOUND" ] && \
+               ! head -c 200 "$FOUND" 2>/dev/null | grep -q 'git-lfs.github.com/spec'; then
               cp "$FOUND" "$APK"
             fi
           fi
 
           if [ ! -s "$APK" ]; then
             echo "===== SEARCH APK IN GITHUB RELEASES ====="
+
             TAGS="$(
               gh release list \
                 --repo "$GITHUB_REPOSITORY" \
                 --limit 100 \
                 --json tagName \
-                --jq '.[].tagName' 2>/dev/null || true
+                --jq '.[].tagName' \
+                2>/dev/null || true
             )"
 
             for TAG in $TAGS; do
@@ -168,7 +175,6 @@ jobs:
           sha256sum "$APK" | tee "$OUTPUT/apk-sha256.txt"
 
       - name: Verify exact VPREBORN base
-        id: verify
         shell: bash
         run: |
           set -euo pipefail
@@ -196,7 +202,7 @@ jobs:
           fi
 
           if find "$APKROOT" -type f -name 'libil2cpp.so' | grep -q .; then
-            echo "::error::This is an IL2CPP build. v1 expects the Mono VPREBORN APK."
+            echo "::error::This workflow expects the Mono VPREBORN APK, not IL2CPP."
             exit 1
           fi
 
@@ -284,7 +290,6 @@ jobs:
 
           chmod +x "$RIPPER"
           echo "RIPPER=$RIPPER" >> "$GITHUB_ENV"
-          "$RIPPER" --help > "$OUTPUT/assetripper-help.txt" 2>&1 || true
 
       - name: Recover editable Unity project
         id: recover
@@ -294,6 +299,7 @@ jobs:
 
           PORT=3333
           EXPORT="$RECOVERED/NFSMW-VPREBORN"
+
           mkdir -p "$EXPORT"
 
           "$RIPPER" \
@@ -305,11 +311,13 @@ jobs:
           trap 'kill "$PID" 2>/dev/null || true' EXIT
 
           READY=0
+
           for i in $(seq 1 120); do
             if curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
               READY=1
               break
             fi
+
             sleep 1
           done
 
@@ -360,13 +368,17 @@ jobs:
           fi
 
           PROJECT=""
+
           if [ -d "$EXPORT/ExportedProject/Assets" ]; then
             PROJECT="$EXPORT/ExportedProject"
           elif [ -d "$EXPORT/Assets" ]; then
             PROJECT="$EXPORT"
           else
             PROJECT="$(
-              find "$EXPORT" -type d -name Assets -print \
+              find "$EXPORT" \
+                -type d \
+                -name Assets \
+                -print \
                 | head -1 \
                 | xargs -r dirname
             )"
@@ -379,6 +391,7 @@ jobs:
           fi
 
           PROJECT="$(realpath "$PROJECT")"
+
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
 
@@ -401,20 +414,23 @@ jobs:
           PROJECT="${{ steps.recover.outputs.project }}"
 
           echo "===== REMOVE ANDROID NATIVE FILES ====="
-          find "$PROJECT/Assets" -type f \
+
+          find "$PROJECT/Assets" \
+            -type f \
             \( -iname '*.so' -o -iname '*.aar' -o -iname '*.jar' -o -iname '*.apk' \) \
             -print \
             | tee "$OUTPUT/removed-android-files.txt" || true
 
-          find "$PROJECT/Assets" -type f \
+          find "$PROJECT/Assets" \
+            -type f \
             \( -iname '*.so' -o -iname '*.aar' -o -iname '*.jar' -o -iname '*.apk' \) \
             -delete || true
 
           rm -rf "$PROJECT/Assets/Plugins/Android" || true
 
-          echo "===== REMOVE RECOVERED UNITY/BCL DLL COPIES ====="
           python3 - <<'PY'
-          import os, shutil
+          import os
+          import shutil
           from pathlib import Path
 
           project = Path(os.environ["PROJECT"])
@@ -434,28 +450,38 @@ jobs:
           }
 
           cs_count = sum(1 for _ in assets.rglob("*.cs"))
-          user_assemblies = {"Assembly-CSharp.dll", "Assembly-UnityScript.dll"} if cs_count >= 10 else set()
+
+          user_assemblies = {
+              "Assembly-CSharp.dll",
+              "Assembly-UnityScript.dll",
+          } if cs_count >= 10 else set()
+
           names = runtime_names | user_assemblies
 
           for p in list(assets.rglob("*.dll")):
               if p.name not in names:
                   continue
+
               rel = p.relative_to(assets)
               dst = moved / rel
               dst.parent.mkdir(parents=True, exist_ok=True)
+
               shutil.move(str(p), str(dst))
+
               meta = Path(str(p) + ".meta")
+
               if meta.exists():
                   shutil.move(str(meta), str(dst) + ".meta")
+
               print("moved", rel)
 
           print("Recovered C# files:", cs_count)
-          print("Kept Boo.Lang.dll / UnityScript.Lang.dll if AssetRipper exported them.")
           PY
 
           mkdir -p "$PROJECT/Assets/NFSMWiOS/Editor"
 
-          cp "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" \
+          cp \
+            "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" \
             "$PROJECT/Assets/NFSMWiOS/app_icon.png"
 
           cat > "$PROJECT/ProjectSettings/ProjectVersion.txt" <<'EOF'
@@ -470,11 +496,6 @@ jobs:
 
           PROJECT="${{ steps.recover.outputs.project }}"
 
-          echo "===== PRE-MIGRATION COMPILE REPAIR ====="
-
-          # AssetRipper reconstructs old assembly metadata as source files.
-          # Unity generates its own assembly attributes, so recovered AssemblyInfo
-          # files cause duplicate AssemblyVersion errors.
           find "$PROJECT/Assets" \
             -type f \
             -path '*/Properties/AssemblyInfo.cs' \
@@ -487,7 +508,8 @@ jobs:
             -delete || true
 
           python3 - <<'PY'
-          import os, re
+          import os
+          import re
           from pathlib import Path
 
           project = Path(os.environ["PROJECT"])
@@ -501,9 +523,6 @@ jobs:
 
               old = s
 
-              # AssetRipper decompiled Assembly-UnityScript into C#.
-              # The old `using UnityScript;` line is invalid in modern C# and is
-              # not needed by the recovered code.
               s = re.sub(
                   r'^\s*using\s+UnityScript\s*;\s*$',
                   '',
@@ -511,16 +530,17 @@ jobs:
                   flags=re.M
               )
 
-              # RCC_CarControllerV3 imports System.Diagnostics as well as
-              # UnityEngine, making bare Debug.Log* ambiguous.
-              if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+              if re.search(
+                  r'^\s*using\s+System\.Diagnostics\s*;',
+                  s,
+                  flags=re.M
+              ):
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
                       s
                   )
 
-              # Remove Android-only Ads assembly namespace references.
               s = s.replace(
                   'UnityEngine.Advertisements.Android',
                   'UnityEngine.Advertisements'
@@ -537,13 +557,8 @@ jobs:
           )
 
           print("Pre-2017 repaired files:", len(changed))
-          for x in changed:
-              print("  ", x)
           PY
 
-          # This fan port only uses ads as a gate/reward interruption.
-          # For the offline iOS port we provide a compatibility layer that
-          # immediately reports success instead of compiling Android Ads code.
           mkdir -p "$PROJECT/Assets/NFSMWiOS"
 
           cat > "$PROJECT/Assets/NFSMWiOS/UnityAdsCompatibilityStub.cs" <<'CS'
@@ -565,8 +580,15 @@ jobs:
 
               public static class Advertisement
               {
-                  public static bool isSupported { get { return true; } }
-                  public static bool isInitialized { get { return true; } }
+                  public static bool isSupported
+                  {
+                      get { return true; }
+                  }
+
+                  public static bool isInitialized
+                  {
+                      get { return true; }
+                  }
 
                   public static bool IsInitialized()
                   {
@@ -577,7 +599,10 @@ jobs:
                   {
                   }
 
-                  public static void Initialize(string gameId, bool testMode)
+                  public static void Initialize(
+                      string gameId,
+                      bool testMode
+                  )
                   {
                   }
 
@@ -601,8 +626,15 @@ jobs:
 
                   public static void Show(ShowOptions options)
                   {
-                      if (options != null && options.resultCallback != null)
-                          options.resultCallback(ShowResult.Finished);
+                      if (
+                          options != null &&
+                          options.resultCallback != null
+                      )
+                      {
+                          options.resultCallback(
+                              ShowResult.Finished
+                          );
+                      }
                   }
 
                   public static void Show(
@@ -610,30 +642,29 @@ jobs:
                       ShowOptions options
                   )
                   {
-                      if (options != null && options.resultCallback != null)
-                          options.resultCallback(ShowResult.Finished);
+                      if (
+                          options != null &&
+                          options.resultCallback != null
+                      )
+                      {
+                          options.resultCallback(
+                              ShowResult.Finished
+                          );
+                      }
                   }
               }
           }
           CS
 
-          echo "===== PRE-2017 KNOWN BLOCKER AUDIT ====="
           {
             echo "AssemblyInfo files:"
             find "$PROJECT/Assets" -type f -name 'AssemblyInfo.cs' -print || true
             echo
             echo "using UnityScript:"
-            grep -RIn --include='*.cs' \
+            grep -RIn \
+              --include='*.cs' \
               -E '^[[:space:]]*using[[:space:]]+UnityScript[[:space:]]*;' \
               "$PROJECT/Assets" || true
-            echo
-            echo "Ambiguous Debug candidates:"
-            grep -RIl --include='*.cs' \
-              'using System.Diagnostics' \
-              "$PROJECT/Assets" \
-              | while read -r f; do
-                  grep -nE '(^|[^[:alnum:]_.])Debug\.' "$f" && echo "FILE=$f" || true
-                done
           } | tee "$OUTPUT/pre2017-known-blockers.txt"
 
       - name: Setup Node 22 and Unity licensing helper
@@ -659,17 +690,21 @@ jobs:
           npm install -g @rage-against-the-pixel/unity-cli
 
           sudo install -d -m 0755 /etc/apt/keyrings
+
           curl -fsSL https://hub.unity3d.com/linux/keys/public \
             | sudo gpg --dearmor \
               -o /etc/apt/keyrings/unityhub.gpg
 
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/unityhub.list >/dev/null
+          echo \
+            "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/unityhub.list \
+            >/dev/null
 
           sudo apt-get update -o Acquire::Retries=4 || true
           sudo apt-get install -y unityhub
 
           HUB_CMD="$(command -v unityhub)"
+
           sudo mkdir -p /opt/unityhub
 
           sudo tee /opt/unityhub/unityhub >/dev/null <<EOF
@@ -678,9 +713,11 @@ jobs:
           EOF
 
           sudo chmod +x /opt/unityhub/unityhub
-          echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" >> "$GITHUB_ENV"
 
-      - name: Activate Unity Personal once for both migration stages
+          echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" \
+            >> "$GITHUB_ENV"
+
+      - name: Activate Unity Personal
         shell: bash
         env:
           UNITY_HUB_PATH: /opt/unityhub/unityhub
@@ -697,23 +734,36 @@ jobs:
 
           if [ -n "${CLIENT:-}" ]; then
             CLIENT_DIR="$(dirname "$CLIENT")"
+
             sudo rm -rf /opt/unityhub/UnityLicensingClient
             sudo mkdir -p /opt/unityhub/UnityLicensingClient
-            sudo cp -a "$CLIENT_DIR"/. /opt/unityhub/UnityLicensingClient/
-            sudo chmod +x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client || true
+
+            sudo cp -a \
+              "$CLIENT_DIR"/. \
+              /opt/unityhub/UnityLicensingClient/
+
+            sudo chmod +x \
+              /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client \
+              || true
           fi
 
           GLOBAL_NODE_MODULES="$(npm root -g)"
+
           LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
+
           test -f "$LICENSE_MODULE"
+
           export LICENSE_MODULE
 
           node <<'NODE'
-          const { LicensingClient, LicenseType } =
-            require(process.env.LICENSE_MODULE);
+          const {
+            LicensingClient,
+            LicenseType
+          } = require(process.env.LICENSE_MODULE);
 
           async function main() {
             const client = new LicensingClient('6.x');
+
             await client.Activate(
               {
                 licenseType: LicenseType.personal,
@@ -722,6 +772,7 @@ jobs:
               },
               true
             );
+
             console.log("UNITY PERSONAL ACTIVATION: SUCCESS");
           }
 
@@ -741,7 +792,6 @@ jobs:
 
           URL="https://download.unity3d.com/download_unity/${MIGRATION_CHANGESET}/LinuxEditorInstaller/Unity-${MIGRATION_UNITY}.tar.xz"
 
-          echo "Downloading migration editor:"
           echo "$URL"
 
           curl -fL \
@@ -750,7 +800,8 @@ jobs:
             "$URL" \
             -o "$WORK/Unity-${MIGRATION_UNITY}.tar.xz"
 
-          tar -xJf "$WORK/Unity-${MIGRATION_UNITY}.tar.xz" \
+          tar -xJf \
+            "$WORK/Unity-${MIGRATION_UNITY}.tar.xz" \
             -C "$WORK/unity-2017"
 
           UNITY2017="$(
@@ -764,11 +815,11 @@ jobs:
 
           if [ -z "$UNITY2017" ]; then
             echo "::error::Unity 2017 Editor executable not found."
-            find "$WORK/unity-2017" -maxdepth 6 -type f | head -400
             exit 1
           fi
 
           echo "UNITY2017=$UNITY2017" >> "$GITHUB_ENV"
+
           "$UNITY2017" -version || true
 
       - name: Unity 2017 compatibility migration and compile gate
@@ -782,7 +833,8 @@ jobs:
           REPAIR_PY="$WORK/unity2017-repair-pass.py"
 
           cat > "$REPAIR_PY" <<'PY'
-          import os, re
+          import os
+          import re
           from pathlib import Path
 
           project = Path(os.environ["PROJECT"])
@@ -807,7 +859,11 @@ jobs:
                   flags=re.M
               )
 
-              if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+              if re.search(
+                  r'^\s*using\s+System\.Diagnostics\s*;',
+                  s,
+                  flags=re.M
+              ):
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
@@ -824,66 +880,90 @@ jobs:
           run_2017() {
             local log="$1"
 
-            rm -rf "$PROJECT/Library/ScriptAssemblies" \
-                   "$PROJECT/Temp" \
-                   "$PROJECT/obj" \
-                   2>/dev/null || true
+            rm -rf \
+              "$PROJECT/Library/ScriptAssemblies" \
+              "$PROJECT/Temp" \
+              "$PROJECT/obj" \
+              2>/dev/null || true
 
             set +e
+
             timeout 75m xvfb-run -a "$UNITY2017" \
               -batchmode \
               -nographics \
               -quit \
               -projectPath "$PROJECT" \
               -logFile "$log"
+
             local rc=$?
+
             set -e
 
             echo "$rc"
           }
 
           echo "===== UNITY 2017 MIGRATION PASS 1 ====="
+
           RC1="$(run_2017 "$LOG1")"
+
           echo "UNITY2017_PASS1_EXIT_CODE=$RC1" \
             | tee "$OUTPUT/unity-2017-pass1-exit-code.txt"
 
           grep -nEi \
             'error CS[0-9]+|Scripts have compiler errors|Compilation failed|Exception|Fatal' \
             "$LOG1" \
-            | tee "$OUTPUT/unity-2017-pass1-errors.txt" || true
+            | tee "$OUTPUT/unity-2017-pass1-errors.txt" \
+            || true
 
-          if grep -qE 'error CS[0-9]+|Scripts have compiler errors|Compilation failed' "$LOG1"; then
-            echo "Pass 1 still has compiler errors. Running automatic repair pass."
+          if grep -qE \
+            'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
+            "$LOG1"
+          then
+            echo "Pass 1 has compiler errors. Running repair."
 
             python3 "$REPAIR_PY"
 
             echo "===== UNITY 2017 MIGRATION PASS 2 ====="
+
             RC2="$(run_2017 "$LOG2")"
+
             echo "UNITY2017_PASS2_EXIT_CODE=$RC2" \
               | tee "$OUTPUT/unity-2017-pass2-exit-code.txt"
 
             grep -nEi \
               'error CS[0-9]+|Scripts have compiler errors|Compilation failed|Exception|Fatal' \
               "$LOG2" \
-              | tee "$OUTPUT/unity-2017-pass2-errors.txt" || true
+              | tee "$OUTPUT/unity-2017-pass2-errors.txt" \
+              || true
 
             FINAL_LOG="$LOG2"
           else
             cp "$LOG1" "$LOG2"
+
             echo "UNITY2017_PASS2_EXIT_CODE=NOT_NEEDED" \
               > "$OUTPUT/unity-2017-pass2-exit-code.txt"
+
             : > "$OUTPUT/unity-2017-pass2-errors.txt"
+
             FINAL_LOG="$LOG1"
           fi
 
-          cp "$FINAL_LOG" "$OUTPUT/unity-2017-migration.log"
+          cp "$FINAL_LOG" \
+            "$OUTPUT/unity-2017-migration.log"
 
-          if grep -qE 'error CS[0-9]+|Scripts have compiler errors|Compilation failed' "$FINAL_LOG"; then
-            echo "::error::Unity 2017 still has compiler errors after the automatic repair pass."
-            grep -nEi -A 8 -B 4 \
+          if grep -qE \
+            'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
+            "$FINAL_LOG"
+          then
+            echo "::error::Unity 2017 still has compiler errors."
+
+            grep -nEi \
+              -A 8 \
+              -B 4 \
               'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
               "$FINAL_LOG" \
               | tail -1000
+
             exit 1
           fi
 
@@ -897,6 +977,7 @@ jobs:
           PROJECT="${{ steps.recover.outputs.project }}"
 
           mkdir -p "$PROJECT/Packages"
+
           cat > "$PROJECT/Packages/manifest.json" <<'JSON'
           {
             "dependencies": {
@@ -937,19 +1018,14 @@ jobs:
 
           rm -f "$PROJECT/Packages/packages-lock.json" || true
 
-          if grep -q 'com.unity.ads' "$PROJECT/Packages/manifest.json"; then
-            echo "::error::com.unity.ads must stay removed; the project uses the iOS compatibility stub."
-            exit 1
-          fi
-
           cat > "$PROJECT/ProjectSettings/ProjectVersion.txt" <<'EOF'
           m_EditorVersion: 2019.4.40f1
           m_EditorVersionWithRevision: 2019.4.40f1 (ffc62b691db5)
           EOF
 
-          echo "===== GENERIC UNITY 5.x -> 2019 SOURCE PATCHES ====="
           python3 - <<'PY'
-          import os, re
+          import os
+          import re
           from pathlib import Path
 
           project = Path(os.environ["PROJECT"])
@@ -963,21 +1039,28 @@ jobs:
 
               old = s
 
-              # Removed legacy GUI component names.
-              s = re.sub(r'\bGUIText\b', 'UnityEngine.UI.Text', s)
-              s = re.sub(r'\bGUITexture\b', 'UnityEngine.UI.RawImage', s)
+              s = re.sub(
+                  r'\bGUIText\b',
+                  'UnityEngine.UI.Text',
+                  s
+              )
 
-              # Removed/renamed indirect draw API seen in old Standard Assets.
+              s = re.sub(
+                  r'\bGUITexture\b',
+                  'UnityEngine.UI.RawImage',
+                  s
+              )
+
               s = s.replace(
                   'Graphics.DrawProceduralIndirect(',
                   'Graphics.DrawProceduralIndirectNow('
               )
+
               s = s.replace(
                   'ComputeBufferType.DrawIndirect',
                   'ComputeBufferType.IndirectArguments'
               )
 
-              # Any remaining decompiled UnityScript import is invalid in 2019.
               s = re.sub(
                   r'^\s*using\s+UnityScript\s*;\s*$',
                   '',
@@ -985,14 +1068,17 @@ jobs:
                   flags=re.M
               )
 
-              if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+              if re.search(
+                  r'^\s*using\s+System\.Diagnostics\s*;',
+                  s,
+                  flags=re.M
+              ):
                   s = re.sub(
                       r'(?<![\w.])Debug\.',
                       'UnityEngine.Debug.',
                       s
                   )
 
-              # Android-only imports often survive recovered mobile projects.
               s = re.sub(
                   r'^\s*using\s+UnityEngine\.Android\s*;\s*$',
                   '',
@@ -1000,27 +1086,26 @@ jobs:
                   flags=re.M
               )
 
-              # The APK contains UnityEngine.Advertisements.Android references.
-              # The iOS rebuild must use the cross-platform Ads namespace instead.
               s = s.replace(
                   'UnityEngine.Advertisements.Android',
                   'UnityEngine.Advertisements'
               )
 
-              # Old scene-loading API -> current SceneManager API.
-              # Fully-qualified names avoid having to inject new using statements.
               s = s.replace(
                   'Application.LoadLevelAsync(',
                   'UnityEngine.SceneManagement.SceneManager.LoadSceneAsync('
               )
+
               s = s.replace(
                   'Application.LoadLevel(',
                   'UnityEngine.SceneManagement.SceneManager.LoadScene('
               )
+
               s = s.replace(
                   'Application.loadedLevelName',
                   'UnityEngine.SceneManagement.SceneManager.GetActiveScene().name'
               )
+
               s = s.replace(
                   'Application.loadedLevel',
                   'UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex'
@@ -1028,18 +1113,21 @@ jobs:
 
               if s != old:
                   p.write_text(s, encoding="utf-8")
-                  changed.append(str(p.relative_to(project)))
+                  changed.append(
+                      str(p.relative_to(project))
+                  )
 
           report = Path(os.environ["OUTPUT"]) / "source-patches.txt"
+
           report.write_text(
               "\n".join(changed) + ("\n" if changed else ""),
               encoding="utf-8"
           )
 
           print("Patched source files:", len(changed))
-          for x in changed[:300]:
-              print("  ", x)
           PY
+
+          mkdir -p "$PROJECT/Assets/NFSMWiOS/Editor"
 
           cat > "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" <<'CS'
           using System;
@@ -1051,15 +1139,22 @@ jobs:
           {
               private string path;
 
-              [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+              [RuntimeInitializeOnLoadMethod(
+                  RuntimeInitializeLoadType.BeforeSceneLoad
+              )]
               private static void Install()
               {
-                  var existing = FindObjectOfType<NFSMWRuntimeLogger>();
+                  var existing =
+                      FindObjectOfType<NFSMWRuntimeLogger>();
+
                   if (existing != null)
                       return;
 
-                  var go = new GameObject("NFSMW-iOS-Stability");
+                  var go =
+                      new GameObject("NFSMW-iOS-Stability");
+
                   DontDestroyOnLoad(go);
+
                   go.AddComponent<NFSMWRuntimeLogger>();
               }
 
@@ -1070,10 +1165,13 @@ jobs:
                       "nfs-mw-ios-runtime.log"
                   );
 
-                  // Safe defaults for an old Unity 5.6 mobile project on iPhone.
-                  Screen.sleepTimeout = SleepTimeout.NeverSleep;
+                  Screen.sleepTimeout =
+                      SleepTimeout.NeverSleep;
+
                   Input.multiTouchEnabled = true;
+
                   QualitySettings.vSyncCount = 0;
+
                   Application.targetFrameRate = 60;
 
                   Application.logMessageReceived += OnLog;
@@ -1083,12 +1181,10 @@ jobs:
                   Write(
                       "BOOT " +
                       DateTime.UtcNow.ToString("O") +
-                      " | unity=" + Application.unityVersion +
-                      " | device=" + SystemInfo.deviceModel +
-                      " | os=" + SystemInfo.operatingSystem +
-                      " | gpu=" + SystemInfo.graphicsDeviceName +
-                      " | api=" + SystemInfo.graphicsDeviceType +
-                      " | ramMB=" + SystemInfo.systemMemorySize
+                      " unity=" + Application.unityVersion +
+                      " device=" + SystemInfo.deviceModel +
+                      " os=" + SystemInfo.operatingSystem +
+                      " gpu=" + SystemInfo.graphicsDeviceName
                   );
               }
 
@@ -1099,28 +1195,24 @@ jobs:
                   SceneManager.sceneLoaded -= OnSceneLoaded;
               }
 
-              private void OnApplicationFocus(bool focus)
-              {
-                  Write("FOCUS " + focus);
-              }
-
-              private void OnApplicationPause(bool pause)
-              {
-                  Write("PAUSE " + pause);
-              }
-
               private void OnLowMemory()
               {
                   Write("LOW_MEMORY");
                   Resources.UnloadUnusedAssets();
               }
 
-              private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+              private void OnSceneLoaded(
+                  Scene scene,
+                  LoadSceneMode mode
+              )
               {
                   Write(
                       "SCENE_LOADED " +
-                      scene.buildIndex + " " +
-                      scene.name + " mode=" + mode
+                      scene.buildIndex +
+                      " " +
+                      scene.name +
+                      " mode=" +
+                      mode
                   );
               }
 
@@ -1134,8 +1226,11 @@ jobs:
                       return;
 
                   Write(
-                      "[" + type + "] " +
-                      condition + "\n" +
+                      "[" +
+                      type +
+                      "] " +
+                      condition +
+                      "\n" +
                       stackTrace
                   );
               }
@@ -1146,11 +1241,16 @@ jobs:
                   {
                       File.AppendAllText(
                           path,
-                          "[" + DateTime.UtcNow.ToString("O") + "] " +
-                          message + "\n"
+                          "[" +
+                          DateTime.UtcNow.ToString("O") +
+                          "] " +
+                          message +
+                          "\n"
                       );
                   }
-                  catch {}
+                  catch
+                  {
+                  }
               }
           }
           CS
@@ -1160,8 +1260,10 @@ jobs:
           using System.IO;
           using System.Linq;
           using System.Collections.Generic;
+
           using UnityEditor;
           using UnityEditor.Build.Reporting;
+
           using UnityEngine;
           using UnityEngine.Rendering;
 
@@ -1169,10 +1271,17 @@ jobs:
           {
               public static void PerformBuild()
               {
-                  string output = Environment.GetEnvironmentVariable("NFS_IOS_XCODE_PATH");
+                  string output =
+                      Environment.GetEnvironmentVariable(
+                          "NFS_IOS_XCODE_PATH"
+                      );
 
                   if (String.IsNullOrEmpty(output))
-                      throw new Exception("NFS_IOS_XCODE_PATH is missing.");
+                  {
+                      throw new Exception(
+                          "NFS_IOS_XCODE_PATH is missing."
+                      );
+                  }
 
                   Directory.CreateDirectory(output);
 
@@ -1181,9 +1290,15 @@ jobs:
                       BuildTarget.iOS
                   );
 
-                  PlayerSettings.companyName = "VPREBORN iOS Port";
-                  PlayerSettings.productName = "NFS Most Wanted VPREBORN";
-                  PlayerSettings.bundleVersion = "1.0";
+                  PlayerSettings.companyName =
+                      "VPREBORN iOS Port";
+
+                  PlayerSettings.productName =
+                      "NFS Most Wanted VPREBORN";
+
+                  PlayerSettings.bundleVersion =
+                      "1.0";
+
                   PlayerSettings.SetApplicationIdentifier(
                       BuildTargetGroup.iOS,
                       "com.negel.nfsmw.vpreborn"
@@ -1199,20 +1314,25 @@ jobs:
                       ApiCompatibilityLevel.NET_4_6
                   );
 
-                  PlayerSettings.iOS.targetOSVersionString = "12.0";
-                  PlayerSettings.iOS.sdkVersion = iOSSdkVersion.DeviceSDK;
-                  PlayerSettings.iOS.appleEnableAutomaticSigning = false;
+                  PlayerSettings.iOS.targetOSVersionString =
+                      "12.0";
 
-                  // Keep old reflection-heavy/gameplay code intact.
-                  PlayerSettings.stripEngineCode = false;
+                  PlayerSettings.iOS.sdkVersion =
+                      iOSSdkVersion.DeviceSDK;
+
+                  PlayerSettings.iOS.appleEnableAutomaticSigning =
+                      false;
+
+                  PlayerSettings.stripEngineCode =
+                      false;
+
                   PlayerSettings.SetManagedStrippingLevel(
                       BuildTargetGroup.iOS,
                       ManagedStrippingLevel.Disabled
                   );
 
-                  // The original 5.6 project was authored for the old mobile
-                  // rendering path. Gamma is the least disruptive migration.
-                  PlayerSettings.colorSpace = ColorSpace.Gamma;
+                  PlayerSettings.colorSpace =
+                      ColorSpace.Gamma;
 
                   PlayerSettings.defaultInterfaceOrientation =
                       UIOrientation.LandscapeLeft;
@@ -1224,130 +1344,132 @@ jobs:
 
                   PlayerSettings.SetGraphicsAPIs(
                       BuildTarget.iOS,
-                      new [] { GraphicsDeviceType.Metal }
+                      new[]
+                      {
+                          GraphicsDeviceType.Metal
+                      }
                   );
 
                   ApplyOriginalIcon();
 
-                  string[] allScenes = AssetDatabase.FindAssets("t:Scene")
-                      .Select(AssetDatabase.GUIDToAssetPath)
-                      .Where(p => p.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
-                      .Distinct()
-                      .ToArray();
+                  string[] allScenes =
+                      AssetDatabase.FindAssets("t:Scene")
+                          .Select(
+                              AssetDatabase.GUIDToAssetPath
+                          )
+                          .Where(
+                              p => p.EndsWith(
+                                  ".unity",
+                                  StringComparison.OrdinalIgnoreCase
+                              )
+                          )
+                          .Distinct()
+                          .ToArray();
 
                   if (allScenes.Length == 0)
-                      throw new Exception("No recovered Unity scenes were found.");
+                  {
+                      throw new Exception(
+                          "No recovered Unity scenes were found."
+                      );
+                  }
 
-                  string[] preferred = {
+                  string[] preferred =
+                  {
                       "menuloadMW",
                       "GaragMW",
                       "MW"
                   };
 
-                  var ordered = new List<string>();
+                  var ordered =
+                      new List<string>();
 
                   foreach (string wanted in preferred)
                   {
-                      string match = allScenes.FirstOrDefault(
-                          p => Path.GetFileNameWithoutExtension(p)
-                              .Equals(wanted, StringComparison.OrdinalIgnoreCase)
-                      );
+                      string match =
+                          allScenes.FirstOrDefault(
+                              p =>
+                                  Path.GetFileNameWithoutExtension(
+                                      p
+                                  ).Equals(
+                                      wanted,
+                                      StringComparison.OrdinalIgnoreCase
+                                  )
+                          );
 
-                      if (!String.IsNullOrEmpty(match) && !ordered.Contains(match))
+                      if (
+                          !String.IsNullOrEmpty(match) &&
+                          !ordered.Contains(match)
+                      )
+                      {
                           ordered.Add(match);
+                      }
                   }
 
-                  foreach (string scene in allScenes.OrderBy(x => x))
+                  foreach (
+                      string scene
+                      in allScenes.OrderBy(x => x)
+                  )
                   {
                       if (!ordered.Contains(scene))
                           ordered.Add(scene);
                   }
 
-                  Debug.Log("===== NFS MW iOS BUILD SCENES =====");
-                  foreach (string scene in ordered)
-                      Debug.Log(scene);
-
-                  RunSceneAudit(ordered);
-
-                  var options = new BuildPlayerOptions
-                  {
-                      scenes = ordered.ToArray(),
-                      locationPathName = output,
-                      target = BuildTarget.iOS,
-                      options = BuildOptions.None
-                  };
-
-                  BuildReport report = BuildPipeline.BuildPlayer(options);
-                  BuildSummary summary = report.summary;
-
                   Debug.Log(
-                      "NFS MW iOS build result: " + summary.result +
-                      " errors=" + summary.totalErrors +
-                      " warnings=" + summary.totalWarnings
+                      "===== NFS MW iOS BUILD SCENES ====="
                   );
 
-                  if (summary.result != BuildResult.Succeeded)
-                      throw new Exception(
-                          "iOS Xcode export failed: " + summary.result
-                      );
-              }
-
-              private static void RunSceneAudit(IEnumerable<string> scenes)
-              {
-                  int missingScripts = 0;
-
-                  foreach (string scenePath in scenes)
+                  foreach (string scene in ordered)
                   {
-                      try
-                      {
-                          var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(
-                              scenePath,
-                              UnityEditor.SceneManagement.OpenSceneMode.Single
-                          );
-
-                          foreach (var root in scene.GetRootGameObjects())
-                          {
-                              foreach (var tr in root.GetComponentsInChildren<Transform>(true))
-                              {
-                                  var components = tr.gameObject.GetComponents<Component>();
-                                  foreach (var component in components)
-                                  {
-                                      if (component == null)
-                                      {
-                                          missingScripts++;
-                                          Debug.LogWarning(
-                                              "MISSING_SCRIPT scene=" +
-                                              scenePath +
-                                              " object=" +
-                                              tr.gameObject.name
-                                          );
-                                      }
-                                  }
-                              }
-                          }
-                      }
-                      catch (Exception e)
-                      {
-                          Debug.LogWarning(
-                              "SCENE_AUDIT_FAILED " +
-                              scenePath + " : " + e
-                          );
-                      }
+                      Debug.Log(scene);
                   }
 
+                  var options =
+                      new BuildPlayerOptions
+                      {
+                          scenes =
+                              ordered.ToArray(),
+
+                          locationPathName =
+                              output,
+
+                          target =
+                              BuildTarget.iOS,
+
+                          options =
+                              BuildOptions.None
+                      };
+
+                  BuildReport report =
+                      BuildPipeline.BuildPlayer(options);
+
+                  BuildSummary summary =
+                      report.summary;
+
                   Debug.Log(
-                      "===== NFS MW SCENE AUDIT ===== missingScripts=" +
-                      missingScripts
+                      "NFS MW iOS build result: " +
+                      summary.result +
+                      " errors=" +
+                      summary.totalErrors +
+                      " warnings=" +
+                      summary.totalWarnings
                   );
 
-                  // Missing-script entries are logged for diagnostics but are
-                  // not deleted automatically: deleting them blindly could
-                  // remove gameplay logic from the recovered fan port.
+                  if (
+                      summary.result !=
+                      BuildResult.Succeeded
+                  )
+                  {
+                      throw new Exception(
+                          "iOS Xcode export failed: " +
+                          summary.result
+                      );
+                  }
               }
 
               private static void ApplyOriginalIcon()
               {
-                  const string iconPath = "Assets/NFSMWiOS/app_icon.png";
+                  const string iconPath =
+                      "Assets/NFSMWiOS/app_icon.png";
 
                   AssetDatabase.ImportAsset(
                       iconPath,
@@ -1355,87 +1477,66 @@ jobs:
                       ImportAssetOptions.ForceUpdate
                   );
 
-                  var importer = AssetImporter.GetAtPath(iconPath) as TextureImporter;
+                  var importer =
+                      AssetImporter.GetAtPath(
+                          iconPath
+                      ) as TextureImporter;
+
                   if (importer != null)
                   {
-                      importer.textureType = TextureImporterType.Default;
-                      importer.alphaIsTransparency = true;
-                      importer.mipmapEnabled = false;
-                      importer.textureCompression = TextureImporterCompression.Uncompressed;
+                      importer.textureType =
+                          TextureImporterType.Default;
+
+                      importer.alphaIsTransparency =
+                          true;
+
+                      importer.mipmapEnabled =
+                          false;
+
+                      importer.textureCompression =
+                          TextureImporterCompression.Uncompressed;
+
                       importer.SaveAndReimport();
                   }
 
-                  Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>(iconPath);
+                  Texture2D icon =
+                      AssetDatabase.LoadAssetAtPath<Texture2D>(
+                          iconPath
+                      );
 
                   if (icon == null)
                   {
-                      Debug.LogWarning("Original APK icon could not be loaded.");
+                      Debug.LogWarning(
+                          "Original APK icon could not be loaded."
+                      );
+
                       return;
                   }
 
-                  int[] sizes = PlayerSettings.GetIconSizesForTargetGroup(
-                      BuildTargetGroup.iOS
-                  );
+                  int[] sizes =
+                      PlayerSettings.GetIconSizesForTargetGroup(
+                          BuildTargetGroup.iOS
+                      );
 
-                  Texture2D[] icons = new Texture2D[sizes.Length];
+                  Texture2D[] icons =
+                      new Texture2D[sizes.Length];
 
                   for (int i = 0; i < icons.Length; i++)
+                  {
                       icons[i] = icon;
+                  }
 
                   PlayerSettings.SetIconsForTargetGroup(
                       BuildTargetGroup.iOS,
                       icons
                   );
-
-                  Debug.Log(
-                      "Original APK icon applied to " +
-                      icons.Length +
-                      " iOS icon slots."
-                  );
               }
           }
           CS
 
-          cp "$PROJECT/Packages/manifest.json" "$OUTPUT/packages-manifest.json"
-
-          echo "===== PRE-BUILD IOS COMPATIBILITY AUDIT ====="
-          python3 - <<'PY'
-          import os, re
-          from pathlib import Path
-
-          project = Path(os.environ["PROJECT"])
-          assets = project / "Assets"
-          report = Path(os.environ["OUTPUT"]) / "ios-compatibility-audit.txt"
-
-          findings = []
-
-          patterns = {
-              "AndroidJava": re.compile(r'\bAndroidJava(?:Class|Object|Proxy|Runnable)\b'),
-              "AndroidNamespace": re.compile(r'UnityEngine\.Android'),
-              "AndroidAdsNamespace": re.compile(r'UnityEngine\.Advertisements\.Android'),
-              "LegacyLoadLevel": re.compile(r'Application\.LoadLevel'),
-              "LegacyGUI": re.compile(r'\bGUI(?:Text|Texture)\b'),
-              "OldIndirectDraw": re.compile(r'Graphics\.DrawProceduralIndirect\('),
-              "FileIO": re.compile(r'\b(?:File|Directory)\.'),
-          }
-
-          for p in assets.rglob("*.cs"):
-              try:
-                  s = p.read_text(encoding="utf-8")
-              except UnicodeDecodeError:
-                  s = p.read_text(encoding="latin1")
-
-              for label, rx in patterns.items():
-                  if rx.search(s):
-                      findings.append(f"{label}: {p.relative_to(project)}")
-
-          report.write_text(
-              "\n".join(findings) + ("\n" if findings else "No known blockers found.\n"),
-              encoding="utf-8"
-          )
-
-          print(report.read_text(encoding="utf-8"))
-          PY
+          cp \
+            "$PROJECT/Packages/manifest.json" \
+            "$OUTPUT/packages-manifest.json"
 
       - name: Install official Unity CLI
         shell: bash
@@ -1459,18 +1560,21 @@ jobs:
           bash "$WORK/unity-cli-install.sh"
 
           OFFICIAL="$UNITY_CLI_HOME/bin/unity"
+
           test -x "$OFFICIAL"
 
-          echo "OFFICIAL_UNITY_CLI=$OFFICIAL" >> "$GITHUB_ENV"
+          echo "OFFICIAL_UNITY_CLI=$OFFICIAL" \
+            >> "$GITHUB_ENV"
+
           "$OFFICIAL" --version
 
       - name: Install Unity 2019.4.40f1 and iOS support
-        id: unity2019
         shell: bash
         run: |
           set -euo pipefail
 
           INSTALL_ROOT="$HOME/UnityEditors"
+
           mkdir -p "$INSTALL_ROOT"
 
           export UNITY_NON_INTERACTIVE=1
@@ -1482,7 +1586,8 @@ jobs:
             --non-interactive \
             --no-banner \
             --no-color \
-            editors install-path --set "$INSTALL_ROOT"
+            editors install-path \
+            --set "$INSTALL_ROOT"
 
           timeout 80m "$OFFICIAL_UNITY_CLI" \
             --non-interactive \
@@ -1494,7 +1599,8 @@ jobs:
             --no-child-modules \
             --yes \
             --accept-eula \
-            2>&1 | tee "$OUTPUT/unity-2019-install.log"
+            2>&1 \
+            | tee "$OUTPUT/unity-2019-install.log"
 
           UNITY2019="$(
             find "$INSTALL_ROOT" \
@@ -1522,8 +1628,27 @@ jobs:
             exit 1
           fi
 
-          echo "UNITY2019=$UNITY2019" >> "$GITHUB_ENV"
+          echo "UNITY2019=$UNITY2019" \
+            >> "$GITHUB_ENV"
+
           "$UNITY2019" -version || true
+
+          UNITY2019_DIR="$(
+            dirname "$(dirname "$UNITY2019")"
+          )"
+
+          {
+            echo "UNITY2019=$UNITY2019"
+            echo "UNITY2019_DIR=$UNITY2019_DIR"
+            echo
+            echo "iOSSupport paths:"
+            find "$UNITY2019_DIR" \
+              -path '*iOSSupport*' \
+              -maxdepth 10 \
+              -print \
+              2>/dev/null \
+              | head -300
+          } | tee "$OUTPUT/unity-2019-ios-module-audit.txt"
 
       - name: Verify Unity 2019 runtime dependencies
         shell: bash
@@ -1532,7 +1657,8 @@ jobs:
 
           MISSING="$(
             ldd "$UNITY2019" 2>/dev/null \
-              | grep 'not found' || true
+              | grep 'not found' \
+              || true
           )"
 
           if [ -n "$MISSING" ]; then
@@ -1542,6 +1668,175 @@ jobs:
           fi
 
           echo "Unity 2019 direct shared-library check passed."
+
+      - name: Unity 2019 warm-up import and post-migration UnityScript repair
+        shell: bash
+        run: |
+          set +e
+
+          PROJECT="${{ steps.recover.outputs.project }}"
+          WARMUP_LOG="$OUTPUT/unity-2019-warmup.log"
+
+          rm -rf \
+            "$PROJECT/Library" \
+            "$PROJECT/Temp" \
+            "$PROJECT/obj" \
+            2>/dev/null || true
+
+          echo "===== UNITY 2019 WARM-UP IMPORT ====="
+
+          timeout 75m xvfb-run -a "$UNITY2019" \
+            -batchmode \
+            -nographics \
+            -quit \
+            -accept-apiupdate \
+            -projectPath "$PROJECT" \
+            -buildTarget iOS \
+            -logFile "$WARMUP_LOG"
+
+          WARMUP_RC=$?
+
+          echo "UNITY2019_WARMUP_EXIT_CODE=$WARMUP_RC" \
+            | tee "$OUTPUT/unity-2019-warmup-exit-code.txt"
+
+          echo "===== WARM-UP LOG TAIL ====="
+
+          tail -300 "$WARMUP_LOG" || true
+
+          set -e
+
+          echo "===== POST-MIGRATION UNITYSCRIPT REPAIR ====="
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          project = Path(os.environ["PROJECT"])
+          assets = project / "Assets"
+          output = Path(os.environ["OUTPUT"])
+
+          using_rx = re.compile(
+              r'(?m)^[\ufeff \t]*using[ \t]+UnityScript'
+              r'(?:\.[A-Za-z_][A-Za-z0-9_.]*)?'
+              r'[ \t]*;[ \t]*(?:\r?\n|$)'
+          )
+
+          changed = []
+          removed_total = 0
+
+          for p in assets.rglob("*.cs"):
+              try:
+                  s = p.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  s = p.read_text(encoding="latin1")
+
+              fixed, count = using_rx.subn("", s)
+
+              if count:
+                  p.write_text(
+                      fixed,
+                      encoding="utf-8"
+                  )
+
+                  changed.append(
+                      (
+                          str(p.relative_to(project)),
+                          count
+                      )
+                  )
+
+                  removed_total += count
+
+                  print(
+                      "repaired",
+                      p.relative_to(project),
+                      "removed=",
+                      count
+                  )
+
+          report = (
+              output /
+              "post2019-unityscript-repair.txt"
+          )
+
+          report.write_text(
+              "removed_total=" +
+              str(removed_total) +
+              "\n" +
+              "\n".join(
+                  f"{path}: {count}"
+                  for path, count in changed
+              ) +
+              ("\n" if changed else ""),
+              encoding="utf-8"
+          )
+
+          target = (
+              assets /
+              "Scripts" /
+              "Assembly-UnityScript" /
+              "SimpleMeshCombine.cs"
+          )
+
+          if target.exists():
+              print(
+                  "===== SimpleMeshCombine.cs AFTER REPAIR ====="
+              )
+
+              for i, line in enumerate(
+                  target.read_text(
+                      encoding="utf-8",
+                      errors="replace"
+                  ).splitlines()[:30],
+                  1
+              ):
+                  print(
+                      f"{i:03d}: {line}"
+                  )
+
+          leftovers = []
+
+          for p in assets.rglob("*.cs"):
+              text = p.read_text(
+                  encoding="utf-8",
+                  errors="replace"
+              )
+
+              if using_rx.search(text):
+                  leftovers.append(
+                      str(p.relative_to(project))
+                  )
+
+          if leftovers:
+              print(
+                  "ERROR: UnityScript using directives remain:"
+              )
+
+              for x in leftovers:
+                  print("  ", x)
+
+              raise SystemExit(1)
+
+          print(
+              "POST-MIGRATION UNITYSCRIPT REPAIR: CLEAN"
+          )
+          PY
+
+          echo "===== REMAINING UNITYSCRIPT REFERENCES ====="
+
+          grep -RIn \
+            --include='*.cs' \
+            'UnityScript' \
+            "$PROJECT/Assets" \
+            | tee "$OUTPUT/post2019-unityscript-references.txt" \
+            || true
+
+          rm -rf \
+            "$PROJECT/Library/ScriptAssemblies" \
+            "$PROJECT/Temp" \
+            "$PROJECT/obj" \
+            2>/dev/null || true
 
       - name: Build NFS Most Wanted iOS Xcode project
         id: unity_build
@@ -1554,15 +1849,31 @@ jobs:
           PROJECT="${{ steps.recover.outputs.project }}"
           LOG="$OUTPUT/unity-2019-ios-build.log"
 
-          rm -rf "$PROJECT/Library" "$PROJECT/Temp" "$PROJECT/obj" \
+          rm -rf \
+            "$PROJECT/Library/ScriptAssemblies" \
+            "$PROJECT/Temp" \
+            "$PROJECT/obj" \
             2>/dev/null || true
 
-          echo "===== NFS MOST WANTED VPREBORN iOS v3.1 ====="
+          echo "===== NFS MOST WANTED VPREBORN iOS v3.2 ====="
           echo "Source editor: $SOURCE_UNITY"
           echo "Migration editor: $MIGRATION_UNITY"
           echo "Build editor: $BUILD_UNITY"
           echo "Project: $PROJECT"
           echo "Xcode output: $NFS_IOS_XCODE_PATH"
+
+          echo "===== FINAL UNITYSCRIPT USING-DIRECTIVE CHECK ====="
+
+          if grep -RIn \
+            --include='*.cs' \
+            -E '^[[:space:]]*using[[:space:]]+UnityScript([.;]|[[:space:]])' \
+            "$PROJECT/Assets"
+          then
+            echo "::error::UnityScript using directive came back before final build."
+            exit 1
+          fi
+
+          echo "UnityScript using-directive check: CLEAN"
 
           timeout 100m xvfb-run -a "$UNITY2019" \
             -batchmode \
@@ -1579,14 +1890,19 @@ jobs:
             | tee "$OUTPUT/unity-2019-exit-code.txt"
 
           echo "===== UNITY 2019 LOG TAIL ====="
+
           tail -500 "$LOG" || true
 
           echo "===== ALL IMPORTANT UNITY ERRORS ====="
-          grep -nEi -A 30 -B 10 \
-            'error CS[0-9]+|Compilation failed|compiler error|Scripts have compiler errors|Exception|Error building Player|BuildFailedException|DllNotFoundException|TypeLoadException|MissingReferenceException|Fatal error|failed' \
+
+          grep -nEi \
+            -A 30 \
+            -B 10 \
+            'error CS[0-9]+|Compilation failed|compiler error|Scripts have compiler errors|Exception|Error building Player|BuildFailedException|DllNotFoundException|TypeLoadException|MissingReferenceException|Fatal error|Native extension for iOS target not found|failed' \
             "$LOG" \
-            | tail -1200 \
-            | tee "$OUTPUT/unity-2019-important-errors.txt" || true
+            | tail -1400 \
+            | tee "$OUTPUT/unity-2019-important-errors.txt" \
+            || true
 
           exit "$RC"
 
@@ -1600,19 +1916,24 @@ jobs:
           READY=false
 
           if [ -d "$XCODE_OUT" ] && \
-             find "$XCODE_OUT" -maxdepth 3 \
+             find "$XCODE_OUT" \
+               -maxdepth 3 \
                \( -name '*.xcodeproj' -o -name '*.xcworkspace' \) \
-               | grep -q .; then
+               | grep -q .
+          then
             READY=true
           fi
 
-          echo "ready=$READY" >> "$GITHUB_OUTPUT"
+          echo "ready=$READY" \
+            >> "$GITHUB_OUTPUT"
 
           {
             echo "XCODE_READY=$READY"
             echo
+
             if [ -d "$XCODE_OUT" ]; then
-              find "$XCODE_OUT" -maxdepth 3 \
+              find "$XCODE_OUT" \
+                -maxdepth 3 \
                 \( -name '*.xcodeproj' -o -name '*.xcworkspace' -o -name 'Info.plist' \) \
                 -print
             fi
@@ -1624,11 +1945,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          tar -C "$(dirname "$XCODE_OUT")" \
-            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-Xcode.tar.gz" \
+          tar \
+            -C "$(dirname "$XCODE_OUT")" \
+            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz" \
             "$(basename "$XCODE_OUT")"
 
-          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-Xcode.tar.gz"
+          ls -lh \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz"
 
       - name: Collect Unity diagnostics
         if: always()
@@ -1636,7 +1959,8 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.1-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.2-Diagnostics"
+
           rm -rf "$DIAG"
           mkdir -p "$DIAG"
 
@@ -1657,12 +1981,14 @@ jobs:
           cp "$OUTPUT/unity-2017-pass1-errors.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2017-pass2-errors.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2017-migration.log" "$DIAG/" 2>/dev/null || true
-          cp "$OUTPUT/unity-2017-exit-code.txt" "$DIAG/" 2>/dev/null || true
-          cp "$OUTPUT/unity-2017-important-errors.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/source-patches.txt" "$DIAG/" 2>/dev/null || true
-          cp "$OUTPUT/ios-compatibility-audit.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/packages-manifest.json" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2019-install.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-ios-module-audit.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-warmup.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2019-warmup-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/post2019-unityscript-repair.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/post2019-unityscript-references.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2019-ios-build.log" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2019-exit-code.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2019-important-errors.txt" "$DIAG/" 2>/dev/null || true
@@ -1674,25 +2000,31 @@ jobs:
             echo "MIGRATION_UNITY=$MIGRATION_UNITY"
             echo "BUILD_UNITY=$BUILD_UNITY"
             echo
+
             echo "===== DISK ====="
             df -h
             echo
+
             echo "===== PROJECT SUMMARY ====="
+
             if [ -n "${PROJECT:-}" ] && [ -d "${PROJECT:-}" ]; then
-              find "$PROJECT/Assets" -type f -name '*.unity' | sort
+              find "$PROJECT/Assets" \
+                -type f \
+                -name '*.unity' \
+                | sort
             fi
           } > "$DIAG/environment.txt" 2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload NFS diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.1-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.1-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.2-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.2-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
 
@@ -1700,8 +2032,8 @@ jobs:
         if: steps.detect_xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.1-Xcode
-          path: NFS-MW-VPREBORN-iOS-v3.1-Xcode.tar.gz
+          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode
+          path: NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -1709,7 +2041,7 @@ jobs:
         if: steps.detect_xcode.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::error::Unity did not generate the iOS Xcode project. Download NFS-MW-VPREBORN-iOS-v3.1-Diagnostics."
+          echo "::error::Unity did not generate the iOS Xcode project. Check NFS-MW-VPREBORN-iOS-v3.2-Diagnostics."
           exit 1
 
   xcode_build:
@@ -1723,7 +2055,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.1-Xcode
+          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode
           path: xcode-artifact
 
       - name: Extract Xcode project
@@ -1732,10 +2064,13 @@ jobs:
           set -euo pipefail
 
           mkdir -p xcode
-          tar -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v3.1-Xcode.tar.gz \
+
+          tar \
+            -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v3.2-Xcode.tar.gz \
             -C xcode
 
-          find xcode -maxdepth 4 \
+          find xcode \
+            -maxdepth 4 \
             \( -name '*.xcodeproj' -o -name '*.xcworkspace' \) \
             -print
 
@@ -1758,10 +2093,16 @@ jobs:
           fi
 
           python3 - "$PBX" <<'PY'
-          import pathlib, sys, re
+          import pathlib
+          import re
+          import sys
 
           p = pathlib.Path(sys.argv[1])
-          s = p.read_text(errors="ignore")
+
+          s = p.read_text(
+              encoding="utf-8",
+              errors="ignore"
+          )
 
           s = re.sub(
               r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
@@ -1781,7 +2122,10 @@ jobs:
               s
           )
 
-          p.write_text(s)
+          p.write_text(
+              s,
+              encoding="utf-8"
+          )
           PY
 
       - name: Build unsigned app
@@ -1789,7 +2133,8 @@ jobs:
         run: |
           set +e
 
-          mkdir -p "$GITHUB_WORKSPACE/xcode-output"
+          mkdir -p \
+            "$GITHUB_WORKSPACE/xcode-output"
 
           WORKSPACE="$(
             find xcode \
@@ -1822,20 +2167,28 @@ jobs:
 
           if [ -n "${WORKSPACE:-}" ]; then
             echo "Building workspace: $WORKSPACE"
+
             xcodebuild \
               -workspace "$WORKSPACE" \
               "${COMMON[@]}" \
               build \
-              2>&1 | tee "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
+              2>&1 \
+              | tee "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
+
             RC=${PIPESTATUS[0]}
+
           elif [ -n "${PROJECT:-}" ]; then
             echo "Building project: $PROJECT"
+
             xcodebuild \
               -project "$PROJECT" \
               "${COMMON[@]}" \
               build \
-              2>&1 | tee "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
+              2>&1 \
+              | tee "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
+
             RC=${PIPESTATUS[0]}
+
           else
             echo "::error::No Xcode workspace/project found."
             RC=1
@@ -1844,7 +2197,9 @@ jobs:
           echo "XCODEBUILD_EXIT_CODE=$RC" \
             | tee "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt"
 
-          tail -500 "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" || true
+          tail -500 \
+            "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" \
+            || true
 
           exit "$RC"
 
@@ -1863,19 +2218,30 @@ jobs:
 
           if [ -z "$APP" ]; then
             echo "::error::Built .app was not found."
-            find "$GITHUB_WORKSPACE/DerivedData" -maxdepth 8 -type d -name '*.app' -print
+
+            find "$GITHUB_WORKSPACE/DerivedData" \
+              -maxdepth 8 \
+              -type d \
+              -name '*.app' \
+              -print
+
             exit 1
           fi
 
           rm -rf Payload
+
           mkdir -p Payload
-          cp -R "$APP" Payload/
+
+          cp -R \
+            "$APP" \
+            Payload/
 
           zip -qry \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa" \
             Payload
 
-          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-unsigned.ipa"
+          ls -lh \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa"
 
       - name: Collect Xcode diagnostics
         if: always()
@@ -1883,26 +2249,40 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.1-Xcode-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.2-Xcode-Diagnostics"
+
           rm -rf "$DIAG"
+
           mkdir -p "$DIAG"
 
-          cp "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" "$DIAG/" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp \
+            "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" \
+            "$DIAG/" \
+            2>/dev/null || true
 
-          xcodebuild -version > "$DIAG/xcode-version.txt" 2>&1 || true
-          sw_vers > "$DIAG/macos-version.txt" 2>&1 || true
+          cp \
+            "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt" \
+            "$DIAG/" \
+            2>/dev/null || true
+
+          xcodebuild -version \
+            > "$DIAG/xcode-version.txt" \
+            2>&1 || true
+
+          sw_vers \
+            > "$DIAG/macos-version.txt" \
+            2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.1-Xcode-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload unsigned IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.1-unsigned-IPA
-          path: NFS-MW-VPREBORN-iOS-v3.1-unsigned.ipa
+          name: NFS-MW-VPREBORN-iOS-v3.2-unsigned-IPA
+          path: NFS-MW-VPREBORN-iOS-v3.2-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -1910,7 +2290,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v3.1-Xcode-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.1-Xcode-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3.2-Xcode-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
