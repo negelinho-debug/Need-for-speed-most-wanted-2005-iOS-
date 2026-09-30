@@ -1,4 +1,4 @@
-name: NFS Most Wanted VPREBORN iOS - v2 Stability + Original Icon
+name: NFS Most Wanted VPREBORN iOS - v3 Compile Repair + Original Icon
 
 on:
   workflow_dispatch:
@@ -463,6 +463,179 @@ jobs:
           m_EditorVersionWithRevision: 2017.4.40f1 (6e14067f8a9a)
           EOF
 
+      - name: Repair old Unity 5.6 scripts before migration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${{ steps.recover.outputs.project }}"
+
+          echo "===== PRE-MIGRATION COMPILE REPAIR ====="
+
+          # AssetRipper reconstructs old assembly metadata as source files.
+          # Unity generates its own assembly attributes, so recovered AssemblyInfo
+          # files cause duplicate AssemblyVersion errors.
+          find "$PROJECT/Assets" \
+            -type f \
+            -path '*/Properties/AssemblyInfo.cs' \
+            -print \
+            | tee "$OUTPUT/removed-assemblyinfo.txt" || true
+
+          find "$PROJECT/Assets" \
+            -type f \
+            -path '*/Properties/AssemblyInfo.cs' \
+            -delete || true
+
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          project = Path(os.environ["PROJECT"])
+          changed = []
+
+          for p in (project / "Assets").rglob("*.cs"):
+              try:
+                  s = p.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  s = p.read_text(encoding="latin1")
+
+              old = s
+
+              # AssetRipper decompiled Assembly-UnityScript into C#.
+              # The old `using UnityScript;` line is invalid in modern C# and is
+              # not needed by the recovered code.
+              s = re.sub(
+                  r'^\s*using\s+UnityScript\s*;\s*$',
+                  '',
+                  s,
+                  flags=re.M
+              )
+
+              # RCC_CarControllerV3 imports System.Diagnostics as well as
+              # UnityEngine, making bare Debug.Log* ambiguous.
+              if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+                  s = re.sub(
+                      r'(?<![\w.])Debug\.',
+                      'UnityEngine.Debug.',
+                      s
+                  )
+
+              # Remove Android-only Ads assembly namespace references.
+              s = s.replace(
+                  'UnityEngine.Advertisements.Android',
+                  'UnityEngine.Advertisements'
+              )
+
+              if s != old:
+                  p.write_text(s, encoding="utf-8")
+                  changed.append(str(p.relative_to(project)))
+
+          report = Path(os.environ["OUTPUT"]) / "pre2017-source-repair.txt"
+          report.write_text(
+              "\n".join(changed) + ("\n" if changed else ""),
+              encoding="utf-8"
+          )
+
+          print("Pre-2017 repaired files:", len(changed))
+          for x in changed:
+              print("  ", x)
+          PY
+
+          # This fan port only uses ads as a gate/reward interruption.
+          # For the offline iOS port we provide a compatibility layer that
+          # immediately reports success instead of compiling Android Ads code.
+          mkdir -p "$PROJECT/Assets/NFSMWiOS"
+
+          cat > "$PROJECT/Assets/NFSMWiOS/UnityAdsCompatibilityStub.cs" <<'CS'
+          using System;
+
+          namespace UnityEngine.Advertisements
+          {
+              public enum ShowResult
+              {
+                  Failed,
+                  Skipped,
+                  Finished
+              }
+
+              public sealed class ShowOptions
+              {
+                  public Action<ShowResult> resultCallback;
+              }
+
+              public static class Advertisement
+              {
+                  public static bool isSupported { get { return true; } }
+                  public static bool isInitialized { get { return true; } }
+
+                  public static bool IsInitialized()
+                  {
+                      return true;
+                  }
+
+                  public static void Initialize(string gameId)
+                  {
+                  }
+
+                  public static void Initialize(string gameId, bool testMode)
+                  {
+                  }
+
+                  public static bool IsReady()
+                  {
+                      return true;
+                  }
+
+                  public static bool IsReady(string placementId)
+                  {
+                      return true;
+                  }
+
+                  public static void Show()
+                  {
+                  }
+
+                  public static void Show(string placementId)
+                  {
+                  }
+
+                  public static void Show(ShowOptions options)
+                  {
+                      if (options != null && options.resultCallback != null)
+                          options.resultCallback(ShowResult.Finished);
+                  }
+
+                  public static void Show(
+                      string placementId,
+                      ShowOptions options
+                  )
+                  {
+                      if (options != null && options.resultCallback != null)
+                          options.resultCallback(ShowResult.Finished);
+                  }
+              }
+          }
+          CS
+
+          echo "===== PRE-2017 KNOWN BLOCKER AUDIT ====="
+          {
+            echo "AssemblyInfo files:"
+            find "$PROJECT/Assets" -type f -name 'AssemblyInfo.cs' -print || true
+            echo
+            echo "using UnityScript:"
+            grep -RIn --include='*.cs' \
+              -E '^[[:space:]]*using[[:space:]]+UnityScript[[:space:]]*;' \
+              "$PROJECT/Assets" || true
+            echo
+            echo "Ambiguous Debug candidates:"
+            grep -RIl --include='*.cs' \
+              'using System.Diagnostics' \
+              "$PROJECT/Assets" \
+              | while read -r f; do
+                  grep -nE '(^|[^[:alnum:]_.])Debug\.' "$f" && echo "FILE=$f" || true
+                done
+          } | tee "$OUTPUT/pre2017-known-blockers.txt"
+
       - name: Setup Node 22 and Unity licensing helper
         uses: actions/setup-node@v4
         with:
@@ -598,44 +771,119 @@ jobs:
           echo "UNITY2017=$UNITY2017" >> "$GITHUB_ENV"
           "$UNITY2017" -version || true
 
-      - name: Unity 2017 compatibility migration pass
+      - name: Unity 2017 compatibility migration and compile gate
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
 
           PROJECT="${{ steps.recover.outputs.project }}"
-          LOG="$OUTPUT/unity-2017-migration.log"
+          LOG1="$OUTPUT/unity-2017-migration-pass1.log"
+          LOG2="$OUTPUT/unity-2017-migration-pass2.log"
 
-          rm -rf "$PROJECT/Library" "$PROJECT/Temp" "$PROJECT/obj" 2>/dev/null || true
+          run_2017() {
+            local log="$1"
 
-          echo "===== UNITY 2017 MIGRATION PASS ====="
-          echo "This stage is deliberately non-blocking."
-          echo "Its job is to let old Unity 5.6 assets/settings pass through a closer editor before 2019."
+            rm -rf "$PROJECT/Library/ScriptAssemblies" \
+                   "$PROJECT/Temp" \
+                   "$PROJECT/obj" \
+                   2>/dev/null || true
 
-          timeout 75m xvfb-run -a "$UNITY2017" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -projectPath "$PROJECT" \
-            -logFile "$LOG"
+            set +e
+            timeout 75m xvfb-run -a "$UNITY2017" \
+              -batchmode \
+              -nographics \
+              -quit \
+              -projectPath "$PROJECT" \
+              -logFile "$log"
+            local rc=$?
+            set -e
 
-          RC=$?
-          echo "UNITY2017_EXIT_CODE=$RC" \
-            | tee "$OUTPUT/unity-2017-exit-code.txt"
+            echo "$rc"
+          }
 
-          echo "===== UNITY 2017 LOG TAIL ====="
-          tail -350 "$LOG" || true
+          echo "===== UNITY 2017 MIGRATION PASS 1 ====="
+          RC1="$(run_2017 "$LOG1")"
+          echo "UNITY2017_PASS1_EXIT_CODE=$RC1" \
+            | tee "$OUTPUT/unity-2017-pass1-exit-code.txt"
 
-          echo "===== UNITY 2017 COMPILER ERRORS ====="
           grep -nEi \
             'error CS[0-9]+|Scripts have compiler errors|Compilation failed|Exception|Fatal' \
-            "$LOG" \
-            | tail -500 \
-            | tee "$OUTPUT/unity-2017-important-errors.txt" || true
+            "$LOG1" \
+            | tee "$OUTPUT/unity-2017-pass1-errors.txt" || true
 
-          # Important: do NOT fail here. Even a compiler-error exit can still
-          # migrate serialized assets/settings enough to help the 2019 pass.
-          exit 0
+          if grep -qE 'error CS[0-9]+|Scripts have compiler errors|Compilation failed' "$LOG1"; then
+            echo "Pass 1 still has compiler errors. Running automatic repair pass."
+
+            python3 - <<'PY'
+            import os, re
+            from pathlib import Path
+
+            project = Path(os.environ["PROJECT"])
+
+            # Remove any assembly metadata regenerated during migration.
+            for p in (project / "Assets").rglob("AssemblyInfo.cs"):
+                if "Properties" in p.parts:
+                    print("delete", p)
+                    p.unlink(missing_ok=True)
+
+            for p in (project / "Assets").rglob("*.cs"):
+                try:
+                    s = p.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    s = p.read_text(encoding="latin1")
+
+                old = s
+
+                s = re.sub(
+                    r'^\s*using\s+UnityScript\s*;\s*$',
+                    '',
+                    s,
+                    flags=re.M
+                )
+
+                if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+                    s = re.sub(
+                        r'(?<![\w.])Debug\.',
+                        'UnityEngine.Debug.',
+                        s
+                    )
+
+                if s != old:
+                    p.write_text(s, encoding="utf-8")
+                    print("repair", p)
+            PY
+
+            echo "===== UNITY 2017 MIGRATION PASS 2 ====="
+            RC2="$(run_2017 "$LOG2")"
+            echo "UNITY2017_PASS2_EXIT_CODE=$RC2" \
+              | tee "$OUTPUT/unity-2017-pass2-exit-code.txt"
+
+            grep -nEi \
+              'error CS[0-9]+|Scripts have compiler errors|Compilation failed|Exception|Fatal' \
+              "$LOG2" \
+              | tee "$OUTPUT/unity-2017-pass2-errors.txt" || true
+
+            FINAL_LOG="$LOG2"
+          else
+            cp "$LOG1" "$LOG2"
+            echo "UNITY2017_PASS2_EXIT_CODE=NOT_NEEDED" \
+              > "$OUTPUT/unity-2017-pass2-exit-code.txt"
+            : > "$OUTPUT/unity-2017-pass2-errors.txt"
+            FINAL_LOG="$LOG1"
+          fi
+
+          cp "$FINAL_LOG" "$OUTPUT/unity-2017-migration.log"
+
+          if grep -qE 'error CS[0-9]+|Scripts have compiler errors|Compilation failed' "$FINAL_LOG"; then
+            echo "::error::Unity 2017 still has compiler errors after the automatic repair pass."
+            grep -nEi -A 8 -B 4 \
+              'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
+              "$FINAL_LOG" \
+              | tail -1000
+            exit 1
+          fi
+
+          echo "UNITY 2017 COMPILE GATE: CLEAN"
 
       - name: Prepare migrated project for Unity 2019 iOS
         shell: bash
@@ -649,7 +897,6 @@ jobs:
           {
             "dependencies": {
               "com.unity.ugui": "1.0.0",
-              "com.unity.ads": "3.7.5",
               "com.unity.modules.ai": "1.0.0",
               "com.unity.modules.animation": "1.0.0",
               "com.unity.modules.assetbundle": "1.0.0",
@@ -686,6 +933,11 @@ jobs:
 
           rm -f "$PROJECT/Packages/packages-lock.json" || true
 
+          if grep -q 'com.unity.ads' "$PROJECT/Packages/manifest.json"; then
+            echo "::error::com.unity.ads must stay removed; the project uses the iOS compatibility stub."
+            exit 1
+          fi
+
           cat > "$PROJECT/ProjectSettings/ProjectVersion.txt" <<'EOF'
           m_EditorVersion: 2019.4.40f1
           m_EditorVersionWithRevision: 2019.4.40f1 (ffc62b691db5)
@@ -720,6 +972,21 @@ jobs:
                   'ComputeBufferType.DrawIndirect',
                   'ComputeBufferType.IndirectArguments'
               )
+
+              # Any remaining decompiled UnityScript import is invalid in 2019.
+              s = re.sub(
+                  r'^\s*using\s+UnityScript\s*;\s*$',
+                  '',
+                  s,
+                  flags=re.M
+              )
+
+              if re.search(r'^\s*using\s+System\.Diagnostics\s*;', s, flags=re.M):
+                  s = re.sub(
+                      r'(?<![\w.])Debug\.',
+                      'UnityEngine.Debug.',
+                      s
+                  )
 
               # Android-only imports often survive recovered mobile projects.
               s = re.sub(
@@ -1286,7 +1553,7 @@ jobs:
           rm -rf "$PROJECT/Library" "$PROJECT/Temp" "$PROJECT/obj" \
             2>/dev/null || true
 
-          echo "===== NFS MOST WANTED VPREBORN iOS v2 ====="
+          echo "===== NFS MOST WANTED VPREBORN iOS v3 ====="
           echo "Source editor: $SOURCE_UNITY"
           echo "Migration editor: $MIGRATION_UNITY"
           echo "Build editor: $BUILD_UNITY"
@@ -1354,10 +1621,10 @@ jobs:
           set -euo pipefail
 
           tar -C "$(dirname "$XCODE_OUT")" \
-            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-Xcode.tar.gz" \
+            -czf "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-Xcode.tar.gz" \
             "$(basename "$XCODE_OUT")"
 
-          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-Xcode.tar.gz"
+          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-Xcode.tar.gz"
 
       - name: Collect Unity diagnostics
         if: always()
@@ -1365,7 +1632,7 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v2-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3-Diagnostics"
           rm -rf "$DIAG"
           mkdir -p "$DIAG"
 
@@ -1376,6 +1643,15 @@ jobs:
           cp "$OUTPUT/assetripper.log" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/recovery-summary.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/removed-android-files.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/removed-assemblyinfo.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/pre2017-source-repair.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/pre2017-known-blockers.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-migration-pass1.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-migration-pass2.log" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass1-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass2-exit-code.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass1-errors.txt" "$DIAG/" 2>/dev/null || true
+          cp "$OUTPUT/unity-2017-pass2-errors.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2017-migration.log" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2017-exit-code.txt" "$DIAG/" 2>/dev/null || true
           cp "$OUTPUT/unity-2017-important-errors.txt" "$DIAG/" 2>/dev/null || true
@@ -1404,15 +1680,15 @@ jobs:
           } > "$DIAG/environment.txt" 2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload NFS diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v2-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v2-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
 
@@ -1420,8 +1696,8 @@ jobs:
         if: steps.detect_xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v2-Xcode
-          path: NFS-MW-VPREBORN-iOS-v2-Xcode.tar.gz
+          name: NFS-MW-VPREBORN-iOS-v3-Xcode
+          path: NFS-MW-VPREBORN-iOS-v3-Xcode.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -1429,7 +1705,7 @@ jobs:
         if: steps.detect_xcode.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::error::Unity did not generate the iOS Xcode project. Download NFS-MW-VPREBORN-iOS-v2-Diagnostics."
+          echo "::error::Unity did not generate the iOS Xcode project. Download NFS-MW-VPREBORN-iOS-v3-Diagnostics."
           exit 1
 
   xcode_build:
@@ -1443,7 +1719,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v2-Xcode
+          name: NFS-MW-VPREBORN-iOS-v3-Xcode
           path: xcode-artifact
 
       - name: Extract Xcode project
@@ -1452,7 +1728,7 @@ jobs:
           set -euo pipefail
 
           mkdir -p xcode
-          tar -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v2-Xcode.tar.gz \
+          tar -xzf xcode-artifact/NFS-MW-VPREBORN-iOS-v3-Xcode.tar.gz \
             -C xcode
 
           find xcode -maxdepth 4 \
@@ -1592,10 +1868,10 @@ jobs:
           cp -R "$APP" Payload/
 
           zip -qry \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-unsigned.ipa" \
             Payload
 
-          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-unsigned.ipa"
+          ls -lh "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-unsigned.ipa"
 
       - name: Collect Xcode diagnostics
         if: always()
@@ -1603,7 +1879,7 @@ jobs:
         run: |
           set +e
 
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v2-Xcode-Diagnostics"
+          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3-Xcode-Diagnostics"
           rm -rf "$DIAG"
           mkdir -p "$DIAG"
 
@@ -1614,15 +1890,15 @@ jobs:
           sw_vers > "$DIAG/macos-version.txt" 2>&1 || true
 
           zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v2-Xcode-Diagnostics.zip" \
+            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3-Xcode-Diagnostics.zip" \
             "$DIAG"
 
       - name: Upload unsigned IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v2-unsigned-IPA
-          path: NFS-MW-VPREBORN-iOS-v2-unsigned.ipa
+          name: NFS-MW-VPREBORN-iOS-v3-unsigned-IPA
+          path: NFS-MW-VPREBORN-iOS-v3-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -1630,7 +1906,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NFS-MW-VPREBORN-iOS-v2-Xcode-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v2-Xcode-Diagnostics.zip
+          name: NFS-MW-VPREBORN-iOS-v3-Xcode-Diagnostics
+          path: NFS-MW-VPREBORN-iOS-v3-Xcode-Diagnostics.zip
           if-no-files-found: warn
           compression-level: 0
