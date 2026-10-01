@@ -1,4 +1,4 @@
-name: NFS Most Wanted VPREBORN iOS - v3.7 Graphics Collision Repair
+name: NFS Most Wanted VPREBORN iOS - v3.7 White Graphics Repair
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   recover_and_export:
-    name: 1. Recover APK, repair graphics, export iOS
+    name: 1. Recover APK, migrate 5.6 -> 2017 -> 2019, export iOS
     runs-on: ubuntu-22.04
     timeout-minutes: 210
 
@@ -36,7 +36,6 @@ jobs:
       xcode_ready: ${{ steps.detect_xcode.outputs.ready }}
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -124,7 +123,6 @@ jobs:
             if head -c 200 "$FOUND" 2>/dev/null \
               | grep -q 'git-lfs.github.com/spec'
             then
-              echo "APK is LFS pointer. Pulling..."
               git lfs install --local || true
               git lfs pull || true
             fi
@@ -138,8 +136,6 @@ jobs:
           fi
 
           if [ ! -s "$APK" ]; then
-
-            echo "===== SEARCH APK IN RELEASES ====="
 
             TAGS="$(
               gh release list \
@@ -177,6 +173,7 @@ jobs:
                 cp "$CANDIDATE" "$APK"
                 break
               fi
+
             done
           fi
 
@@ -185,7 +182,6 @@ jobs:
             exit 1
           fi
 
-          echo "APK:"
           ls -lh "$APK"
 
           sha256sum "$APK" \
@@ -225,7 +221,7 @@ jobs:
             -name 'libil2cpp.so' \
             | grep -q .
           then
-            echo "::error::Expected Mono VPREBORN APK."
+            echo "::error::Expected Mono APK, not IL2CPP."
             exit 1
           fi
 
@@ -274,8 +270,10 @@ jobs:
 
           fi
 
-          if [ -z "${ICON:-}" ] || [ ! -s "$ICON" ]; then
-            echo "::error::Original app icon not found."
+          if [ -z "${ICON:-}" ] || \
+             [ ! -s "$ICON" ]
+          then
+            echo "::error::Original app_icon.png not found."
             exit 1
           fi
 
@@ -314,10 +312,7 @@ jobs:
               | head -1
           )"
 
-          if [ -z "$RIPPER" ]; then
-            echo "::error::AssetRipper executable not found."
-            exit 1
-          fi
+          test -n "$RIPPER"
 
           chmod +x "$RIPPER"
 
@@ -361,11 +356,11 @@ jobs:
             fi
 
             sleep 1
+
           done
 
           if [ "$READY" -ne 1 ]; then
             echo "::error::AssetRipper did not start."
-            tail -300 "$OUTPUT/assetripper.log" || true
             exit 1
           fi
 
@@ -377,8 +372,6 @@ jobs:
               --data-urlencode "Path=$APKROOT" \
               "http://127.0.0.1:${PORT}/LoadFolder"
           )"
-
-          echo "LOAD_HTTP=$LOAD_CODE"
 
           if [ "$LOAD_CODE" != "200" ] && \
              [ "$LOAD_CODE" != "302" ]
@@ -396,8 +389,6 @@ jobs:
               --data-urlencode 'CreateSubfolder=false' \
               "http://127.0.0.1:${PORT}/Export/UnityProject"
           )"
-
-          echo "EXPORT_HTTP=$EXPORT_CODE"
 
           kill "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true
@@ -448,9 +439,6 @@ jobs:
             echo "RECOVERED_PROJECT=$PROJECT"
             echo "SCENES=$(find "$PROJECT/Assets" -type f -name '*.unity' | wc -l | tr -d ' ')"
             echo "CS_FILES=$(find "$PROJECT/Assets" -type f -name '*.cs' | wc -l | tr -d ' ')"
-            echo "MATERIALS=$(find "$PROJECT/Assets" -type f -name '*.mat' | wc -l | tr -d ' ')"
-            echo "SHADERS=$(find "$PROJECT/Assets" -type f -name '*.shader' | wc -l | tr -d ' ')"
-            echo "TEXTURES=$(find "$PROJECT/Assets" -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.tga' \) | wc -l | tr -d ' ')"
           } | tee "$OUTPUT/recovery-summary.txt"
 
       - name: Sanitize recovered Android project
@@ -479,10 +467,16 @@ jobs:
           import shutil
           from pathlib import Path
 
-          project = Path(os.environ["PROJECT"])
+          project = Path(
+              os.environ["PROJECT"]
+          )
+
           assets = project / "Assets"
 
-          moved = project.parent / "removed-runtime-dlls"
+          moved = (
+              project.parent /
+              "removed-runtime-dlls"
+          )
 
           moved.mkdir(
               parents=True,
@@ -502,12 +496,17 @@ jobs:
               "Assembly-UnityScript.dll",
           }
 
-          for p in list(assets.rglob("*.dll")):
+          for p in list(
+              assets.rglob("*.dll")
+          ):
 
               if p.name not in runtime_names:
                   continue
 
-              rel = p.relative_to(assets)
+              rel = p.relative_to(
+                  assets
+              )
+
               dst = moved / rel
 
               dst.parent.mkdir(
@@ -520,15 +519,15 @@ jobs:
                   str(dst)
               )
 
-              meta = Path(str(p) + ".meta")
+              meta = Path(
+                  str(p) + ".meta"
+              )
 
               if meta.exists():
                   shutil.move(
                       str(meta),
                       str(dst) + ".meta"
                   )
-
-              print("moved", rel)
           PY
 
           mkdir -p \
@@ -562,9 +561,13 @@ jobs:
           import re
           from pathlib import Path
 
-          project = Path(os.environ["PROJECT"])
+          project = Path(
+              os.environ["PROJECT"]
+          )
 
-          for p in (project / "Assets").rglob("*.cs"):
+          for p in (
+              project / "Assets"
+          ).rglob("*.cs"):
 
               s = p.read_text(
                   encoding="utf-8",
@@ -721,16 +724,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -n "${UNITY_USERNAME:-}" || {
-            echo "::error::UNITY_USERNAME secret missing."
-            exit 1
-          }
-
-          test -n "${UNITY_PASSWORD:-}" || {
-            echo "::error::UNITY_PASSWORD secret missing."
-            exit 1
-          }
-
           npm install -g \
             @rage-against-the-pixel/unity-cli
 
@@ -775,22 +768,13 @@ jobs:
           sudo chmod +x \
             /opt/unityhub/unityhub
 
-          echo \
-            "UNITY_HUB_PATH=/opt/unityhub/unityhub" \
-            >> "$GITHUB_ENV"
-
       - name: Activate Unity Personal
         shell: bash
-        env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
         run: |
           set -euo pipefail
 
           CLIENT="$(
-            find \
-              /usr \
-              /opt \
-              "$HOME" \
+            find /usr /opt "$HOME" \
               -type f \
               -name 'Unity.Licensing.Client' \
               2>/dev/null \
@@ -802,9 +786,6 @@ jobs:
             CLIENT_DIR="$(
               dirname "$CLIENT"
             )"
-
-            sudo rm -rf \
-              /opt/unityhub/UnityLicensingClient
 
             sudo mkdir -p \
               /opt/unityhub/UnityLicensingClient
@@ -823,8 +804,6 @@ jobs:
           )"
 
           LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
-
-          test -f "$LICENSE_MODULE"
 
           export LICENSE_MODULE
 
@@ -864,15 +843,7 @@ jobs:
 
           main().catch((e) => {
 
-            console.error(
-              "UNITY PERSONAL ACTIVATION FAILED"
-            );
-
-            console.error(
-              e && e.stack
-                ? e.stack
-                : e
-            );
+            console.error(e);
 
             process.exit(1);
 
@@ -908,10 +879,7 @@ jobs:
               | head -1
           )"
 
-          if [ -z "$UNITY2017" ]; then
-            echo "::error::Unity 2017 not found."
-            exit 1
-          fi
+          test -n "$UNITY2017"
 
           echo "UNITY2017=$UNITY2017" \
             >> "$GITHUB_ENV"
@@ -922,6 +890,7 @@ jobs:
           set -euo pipefail
 
           PROJECT="${{ steps.recover.outputs.project }}"
+
           LOG="$OUTPUT/unity-2017-migration.log"
 
           rm -rf \
@@ -945,9 +914,6 @@ jobs:
 
           set -e
 
-          echo \
-            "UNITY2017_EXIT_CODE=$RC"
-
           if grep -qE \
             'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
             "$LOG"
@@ -963,7 +929,7 @@ jobs:
           fi
 
           echo \
-            "UNITY 2017 COMPILE GATE: CLEAN"
+            "Unity 2017 migration completed with RC=$RC"
 
       - name: Prepare migrated project for Unity 2019 iOS
         shell: bash
@@ -972,8 +938,7 @@ jobs:
 
           PROJECT="${{ steps.recover.outputs.project }}"
 
-          mkdir -p \
-            "$PROJECT/Packages"
+          mkdir -p "$PROJECT/Packages"
 
           cat > \
             "$PROJECT/Packages/manifest.json" \
@@ -1031,7 +996,10 @@ jobs:
           import re
           from pathlib import Path
 
-          project = Path(os.environ["PROJECT"])
+          project = Path(
+              os.environ["PROJECT"]
+          )
+
           assets = project / "Assets"
 
           for p in assets.rglob("*.cs"):
@@ -1184,23 +1152,23 @@ jobs:
                   if (value == null)
                       return 0;
 
-                  Array array =
+                  Array a =
                       value as Array;
 
-                  if (array != null)
-                      return array.Length;
+                  if (a != null)
+                      return a.Length;
 
-                  string text =
+                  string s =
                       value as string;
 
-                  if (text != null)
-                      return text.Length;
+                  if (s != null)
+                      return s.Length;
 
-                  ICollection collection =
+                  ICollection c =
                       value as ICollection;
 
-                  if (collection != null)
-                      return collection.Count;
+                  if (c != null)
+                      return c.Count;
 
                   return 0;
               }
@@ -1289,10 +1257,6 @@ jobs:
 
               private void OnLowMemory()
               {
-                  Write(
-                      "LOW_MEMORY"
-                  );
-
                   Resources.UnloadUnusedAssets();
               }
 
@@ -1561,20 +1525,6 @@ jobs:
                       }
                   }
 
-                  Debug.Log(
-                      "===== NFS MW BUILD SCENES ====="
-                  );
-
-                  foreach (
-                      string scene
-                      in ordered
-                  )
-                  {
-                      Debug.Log(
-                          scene
-                      );
-                  }
-
                   var options =
                       new BuildPlayerOptions
                       {
@@ -1601,11 +1551,7 @@ jobs:
 
                   Debug.Log(
                       "NFS MW iOS build result: " +
-                      summary.result +
-                      " errors=" +
-                      summary.totalErrors +
-                      " warnings=" +
-                      summary.totalWarnings
+                      summary.result
                   );
 
                   if (
@@ -1638,7 +1584,9 @@ jobs:
                           iconPath
                       ) as TextureImporter;
 
-                  if (importer != null)
+                  if (
+                      importer != null
+                  )
                   {
                       importer.textureType =
                           TextureImporterType.Default;
@@ -1663,7 +1611,10 @@ jobs:
                           iconPath
                       );
 
-                  if (icon == null)
+                  if (
+                      icon ==
+                      null
+                  )
                       return;
 
                   int[] sizes =
@@ -1736,9 +1687,6 @@ jobs:
             "OFFICIAL_UNITY_CLI=$OFFICIAL" \
             >> "$GITHUB_ENV"
 
-          "$OFFICIAL" \
-            --version
-
       - name: Install Unity 2019.4.40f1 and iOS support
         shell: bash
         run: |
@@ -1749,10 +1697,14 @@ jobs:
           mkdir -p \
             "$INSTALL_ROOT"
 
-          export UNITY_NON_INTERACTIVE=1
-          export UNITY_NO_CONSENT_PROMPT=1
-          export UNITY_NO_UPDATE_CHECK=1
-          export UNITY_INSTALL_RETRIES=3
+          export \
+            UNITY_NON_INTERACTIVE=1
+
+          export \
+            UNITY_NO_CONSENT_PROMPT=1
+
+          export \
+            UNITY_NO_UPDATE_CHECK=1
 
           "$OFFICIAL_UNITY_CLI" \
             --non-interactive \
@@ -1798,38 +1750,11 @@ jobs:
             )"
           fi
 
-          if [ -z "$UNITY2019" ]; then
-            echo "::error::Unity 2019 executable not found."
-            exit 1
-          fi
+          test -n "$UNITY2019"
 
           echo \
             "UNITY2019=$UNITY2019" \
             >> "$GITHUB_ENV"
-
-          "$UNITY2019" \
-            -version \
-            || true
-
-      - name: Verify Unity 2019 runtime dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          MISSING="$(
-            ldd "$UNITY2019" \
-              2>/dev/null \
-              | grep 'not found' \
-              || true
-          )"
-
-          if [ -n "$MISSING" ]; then
-            echo "::error::Missing Unity Linux dependencies:"
-            echo "$MISSING"
-            exit 1
-          fi
-
-          echo "Unity dependencies: OK"
 
       - name: Unity 2019 warm-up import and repair
         shell: bash
@@ -1837,6 +1762,7 @@ jobs:
           set +e
 
           PROJECT="${{ steps.recover.outputs.project }}"
+
           WARMUP_LOG="$OUTPUT/unity-2019-warmup.log"
 
           rm -rf \
@@ -1863,10 +1789,6 @@ jobs:
             | tee \
               "$OUTPUT/unity-2019-warmup-exit-code.txt"
 
-          tail -300 \
-            "$WARMUP_LOG" \
-            || true
-
           set -e
 
           python3 - <<'PY'
@@ -1874,7 +1796,10 @@ jobs:
           import re
           from pathlib import Path
 
-          project = Path(os.environ["PROJECT"])
+          project = Path(
+              os.environ["PROJECT"]
+          )
+
           assets = project / "Assets"
 
           using_rx = re.compile(
@@ -1883,7 +1808,9 @@ jobs:
               r'[ \t]*;[ \t]*(?:\r?\n|$)'
           )
 
-          for p in assets.rglob("*.cs"):
+          for p in assets.rglob(
+              "*.cs"
+          ):
 
               s = p.read_text(
                   encoding="utf-8",
@@ -1906,7 +1833,9 @@ jobs:
               "RCC_GetBounds.cs",
           ):
 
-              for p in assets.rglob(name):
+              for p in assets.rglob(
+                  name
+              ):
 
                   s = p.read_text(
                       encoding="utf-8",
@@ -1932,1168 +1861,229 @@ jobs:
             "$PROJECT/obj" \
             2>/dev/null || true
 
-      - name: Install v3.7 graphics and collision repair
+      - name: v3.7 repair AssetRipper white shaders
         shell: bash
         run: |
           set -euo pipefail
 
           PROJECT="${{ steps.recover.outputs.project }}"
 
-          mkdir -p \
-            "$PROJECT/Assets/NFSMWiOS/Editor"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
 
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWGraphicsRepair.cs" \
-            <<'CS'
-          using System;
-          using System.IO;
-          using System.Linq;
-          using System.Collections.Generic;
+          project = Path(
+              os.environ["PROJECT"]
+          )
 
-          using UnityEditor;
-          using UnityEditor.SceneManagement;
+          assets = project / "Assets"
 
-          using UnityEngine;
-          using UnityEngine.SceneManagement;
-          using UnityEngine.Rendering;
+          patched = []
+          skipped = []
 
-          public static class NFSMWGraphicsRepair
-          {
-              private static int materialsScanned;
-              private static int materialsRepaired;
-              private static int materialsWithoutTexture;
-              private static int meshCollidersAdded;
-              private static int terrainCollidersAdded;
-              private static int collidersEnabled;
+          preferred = [
+              "_MainTex",
+              "_BaseMap",
+              "_BaseTex",
+              "_Diffuse",
+              "_DiffuseTex",
+              "_Albedo",
+              "_AlbedoTex",
+              "_ColorMap",
+              "_Texture",
+              "_Tex",
+          ]
 
-              private sealed class TextureChoice
-              {
-                  public Texture texture;
-                  public string property;
-                  public Vector2 scale;
-                  public Vector2 offset;
-              }
+          property_rx = re.compile(
+              r'(?m)^\s*'
+              r'([A-Za-z_][A-Za-z0-9_]*)'
+              r'\s*\('
+              r'[^\n]*?'
+              r',\s*2D\s*\)'
+              r'\s*='
+          )
 
-              public static void Run()
-              {
-                  Debug.Log(
-                      "===== NFS MW v3.7 GRAPHICS/COLLISION REPAIR START ====="
-                  );
+          for path in assets.rglob(
+              "*.shader"
+          ):
 
-                  RepairMaterials();
-                  RepairScenes();
-
-                  AssetDatabase.SaveAssets();
-                  AssetDatabase.Refresh();
-
-                  string report =
-                      "materialsScanned=" +
-                      materialsScanned +
-                      "\nmaterialsRepaired=" +
-                      materialsRepaired +
-                      "\nmaterialsWithoutTexture=" +
-                      materialsWithoutTexture +
-                      "\nmeshCollidersAdded=" +
-                      meshCollidersAdded +
-                      "\nterrainCollidersAdded=" +
-                      terrainCollidersAdded +
-                      "\ncollidersEnabled=" +
-                      collidersEnabled +
-                      "\n";
-
-                  string reportPath =
-                      Environment.GetEnvironmentVariable(
-                          "NFS_REPAIR_REPORT_PATH"
-                      );
-
-                  if (
-                      !String.IsNullOrEmpty(
-                          reportPath
-                      )
+              try:
+                  source = path.read_text(
+                      encoding="utf-8",
+                      errors="replace"
                   )
-                  {
-                      try
-                      {
-                          System.IO.File.WriteAllText(
-                              reportPath,
-                              report
-                          );
-                      }
-                      catch (
-                          Exception ex
-                      )
-                      {
-                          Debug.LogWarning(
-                              "Could not write repair report: " +
-                              ex.Message
-                          );
-                      }
-                  }
+              except Exception:
+                  continue
 
-                  Debug.Log(
-                      "===== NFS MW v3.7 REPAIR RESULT =====\n" +
-                      report
-                  );
-              }
+              if (
+                  "DummyShaderTextExporter"
+                  not in source
+              ):
+                  continue
 
-              private static void RepairMaterials()
-              {
-                  string[] materialGuids =
-                      AssetDatabase.FindAssets(
-                          "t:Material"
-                      );
+              properties = []
 
-                  foreach (
-                      string guid
-                      in materialGuids
+              for name in property_rx.findall(
+                  source
+              ):
+                  if name not in properties:
+                      properties.append(name)
+
+              if not properties:
+                  skipped.append(
+                      str(
+                          path.relative_to(
+                              project
+                          )
+                      ) +
+                      " : no 2D texture property"
                   )
-                  {
-                      string path =
-                          AssetDatabase.GUIDToAssetPath(
-                              guid
-                          );
 
-                      Material material =
-                          AssetDatabase.LoadAssetAtPath<
-                              Material
-                          >(
-                              path
-                          );
+                  continue
 
-                      if (material == null)
-                          continue;
+              choice = None
 
-                      materialsScanned++;
+              for wanted in preferred:
+                  if wanted in properties:
+                      choice = wanted
+                      break
 
-                      Shader oldShader =
-                          material.shader;
+              if choice is None:
+                  choice = properties[0]
 
-                      bool broken =
-                          oldShader == null;
+              old = source
 
-                      bool internalError =
-                          oldShader != null &&
-                          oldShader.name ==
-                          "Hidden/InternalErrorShader";
+              if choice != "_MainTex":
 
-                      bool dummy =
-                          IsAssetRipperDummyShader(
-                              oldShader
-                          );
-
-                      if (
-                          !broken &&
-                          !internalError &&
-                          !dummy
-                      )
-                      {
-                          continue;
-                      }
-
-                      string oldShaderName =
-                          oldShader != null
-                              ? oldShader.name
-                              : "";
-
-                      if (
-                          ContainsIgnoreCase(
-                              oldShaderName,
-                              "Skybox"
-                          ) ||
-                          ContainsIgnoreCase(
-                              material.name,
-                              "Skybox"
-                          )
-                      )
-                      {
-                          Debug.Log(
-                              "Skip skybox material: " +
-                              path
-                          );
-
-                          continue;
-                      }
-
-                      TextureChoice texture =
-                          FindBestTexture(
-                              material
-                          );
-
-                      Color savedColor =
-                          Color.white;
-
-                      if (
-                          material.HasProperty(
-                              "_Color"
-                          )
-                      )
-                      {
-                          savedColor =
-                              material.GetColor(
-                                  "_Color"
-                              );
-                      }
-
-                      int oldQueue =
-                          material.renderQueue;
-
-                      Shader replacement =
-                          FindReplacementShader(
-                              material,
-                              oldShaderName
-                          );
-
-                      if (replacement == null)
-                      {
-                          Debug.LogWarning(
-                              "NO REPLACEMENT SHADER: " +
-                              path +
-                              " old=" +
-                              oldShaderName
-                          );
-
-                          continue;
-                      }
-
-                      material.shader =
-                          replacement;
-
-                      if (
-                          texture != null &&
-                          texture.texture != null &&
-                          material.HasProperty(
-                              "_MainTex"
-                          )
-                      )
-                      {
-                          material.SetTexture(
-                              "_MainTex",
-                              texture.texture
-                          );
-
-                          material.SetTextureScale(
-                              "_MainTex",
-                              texture.scale
-                          );
-
-                          material.SetTextureOffset(
-                              "_MainTex",
-                              texture.offset
-                          );
-                      }
-                      else
-                      {
-                          materialsWithoutTexture++;
-
-                          Debug.LogWarning(
-                              "Repaired material has no recovered texture: " +
-                              path +
-                              " oldShader=" +
-                              oldShaderName
-                          );
-                      }
-
-                      if (
-                          material.HasProperty(
-                              "_Color"
-                          )
-                      )
-                      {
-                          material.SetColor(
-                              "_Color",
-                              savedColor
-                          );
-                      }
-
-                      ConfigureReplacement(
-                          material,
-                          replacement,
-                          oldShaderName,
-                          oldQueue
-                      );
-
-                      EditorUtility.SetDirty(
-                          material
-                      );
-
-                      materialsRepaired++;
-
-                      Debug.Log(
-                          "MATERIAL REPAIR: " +
-                          path +
-                          " | " +
-                          oldShaderName +
-                          " -> " +
-                          replacement.name +
-                          " | texture=" +
-                          (
-                              texture != null &&
-                              texture.texture != null
-                                  ? texture.texture.name +
-                                    " from " +
-                                    texture.property
-                                  : "NONE"
-                          )
-                      );
-                  }
-              }
-
-              private static bool IsAssetRipperDummyShader(
-                  Shader shader
-              )
-              {
-                  if (shader == null)
-                      return false;
-
-                  string assetPath =
-                      AssetDatabase.GetAssetPath(
-                          shader
-                      );
-
-                  if (
-                      String.IsNullOrEmpty(
-                          assetPath
-                      )
+                  uv_name = (
+                      "uv_" +
+                      choice.lstrip("_")
                   )
-                  {
-                      return false;
-                  }
 
-                  string projectRoot =
-                      System.IO.Directory
-                          .GetParent(
-                              Application.dataPath
-                          )
-                          .FullName;
-
-                  string fullPath =
-                      System.IO.Path.Combine(
-                          projectRoot,
-                          assetPath
-                      );
-
-                  if (
-                      !System.IO.File.Exists(
-                          fullPath
-                      )
+                  source, count_sampler = re.subn(
+                      r'\bsampler2D\s+_MainTex\s*;',
+                      "sampler2D " +
+                      choice +
+                      ";",
+                      source
                   )
-                  {
-                      return false;
-                  }
 
-                  try
-                  {
-                      string source =
-                          System.IO.File.ReadAllText(
-                              fullPath
-                          );
-
-                      return source.Contains(
-                          "DummyShaderTextExporter"
-                      );
-                  }
-                  catch
-                  {
-                      return false;
-                  }
-              }
-
-              private static TextureChoice FindBestTexture(
-                  Material material
-              )
-              {
-                  string[] preferred =
-                  {
-                      "_MainTex",
-                      "_BaseMap",
-                      "_BaseTex",
-                      "_Diffuse",
-                      "_DiffuseTex",
-                      "_Albedo",
-                      "_AlbedoTex",
-                      "_Texture",
-                      "_Tex",
-                      "_ColorMap",
-                      "_DetailTex"
-                  };
-
-                  foreach (
-                      string property
-                      in preferred
+                  source, count_uv = re.subn(
+                      r'\bfloat2\s+uv_MainTex\s*;',
+                      "float2 " +
+                      uv_name +
+                      ";",
+                      source
                   )
-                  {
-                      if (
-                          !material.HasProperty(
-                              property
-                          )
-                      )
-                      {
-                          continue;
-                      }
 
-                      Texture texture =
-                          material.GetTexture(
-                              property
-                          );
+                  source, count_sample = re.subn(
+                      r'tex2D\s*\(\s*'
+                      r'_MainTex\s*,\s*'
+                      r'IN\.uv_MainTex\s*'
+                      r'\)',
+                      "tex2D(" +
+                      choice +
+                      ", IN." +
+                      uv_name +
+                      ")",
+                      source
+                  )
 
-                      if (texture == null)
-                          continue;
+                  if not (
+                      count_sampler and
+                      count_uv and
+                      count_sample
+                  ):
+                      source = old
 
-                      return new TextureChoice
-                      {
-                          texture =
-                              texture,
-
-                          property =
-                              property,
-
-                          scale =
-                              material.GetTextureScale(
-                                  property
-                              ),
-
-                          offset =
-                              material.GetTextureOffset(
-                                  property
+                      skipped.append(
+                          str(
+                              path.relative_to(
+                                  project
                               )
-                      };
-                  }
-
-                  try
-                  {
-                      string[] properties =
-                          material
-                              .GetTexturePropertyNames();
-
-                      foreach (
-                          string property
-                          in properties
+                          ) +
+                          " : dummy pattern not matched"
                       )
-                      {
-                          Texture texture =
-                              material.GetTexture(
-                                  property
-                              );
 
-                          if (texture == null)
-                              continue;
+                      continue
 
-                          return new TextureChoice
-                          {
-                              texture =
-                                  texture,
-
-                              property =
-                                  property,
-
-                              scale =
-                                  material.GetTextureScale(
-                                      property
-                                  ),
-
-                              offset =
-                                  material.GetTextureOffset(
-                                      property
-                                  )
-                          };
-                      }
-                  }
-                  catch
-                  {
-                  }
-
-                  return null;
-              }
-
-              private static Shader FindReplacementShader(
-                  Material material,
-                  string oldShaderName
+              source = re.sub(
+                  r'Fallback\s+"Transparent"',
+                  'Fallback "Legacy Shaders/Transparent/Diffuse"',
+                  source
               )
-              {
-                  string check =
+
+              if source != old:
+
+                  path.write_text(
+                      source,
+                      encoding="utf-8"
+                  )
+
+                  patched.append(
                       (
-                          material.name +
-                          " " +
-                          oldShaderName
-                      ).ToLowerInvariant();
-
-                  Shader shader;
-
-                  if (
-                      check.Contains(
-                          "particle"
-                      ) ||
-                      check.Contains(
-                          "smoke"
-                      ) ||
-                      check.Contains(
-                          "flare"
+                          str(
+                              path.relative_to(
+                                  project
+                              )
+                          ),
+                          choice
                       )
                   )
-                  {
-                      shader =
-                          Shader.Find(
-                              "Particles/Standard Unlit"
-                          );
 
-                      if (shader != null)
-                          return shader;
+          report = (
+              "PATCHED=" +
+              str(len(patched)) +
+              "\nSKIPPED=" +
+              str(len(skipped)) +
+              "\n"
+          )
 
-                      shader =
-                          Shader.Find(
-                              "Particles/Additive"
-                          );
-
-                      if (shader != null)
-                          return shader;
-                  }
-
-                  if (
-                      check.Contains(
-                          "glass"
-                      ) ||
-                      check.Contains(
-                          "window"
-                      ) ||
-                      check.Contains(
-                          "transparent"
-                      )
-                  )
-                  {
-                      shader =
-                          Shader.Find(
-                              "Legacy Shaders/Transparent/Diffuse"
-                          );
-
-                      if (shader != null)
-                          return shader;
-
-                      shader =
-                          Shader.Find(
-                              "Unlit/Transparent"
-                          );
-
-                      if (shader != null)
-                          return shader;
-                  }
-
-                  if (
-                      check.Contains(
-                          "ui/"
-                      ) ||
-                      check.Contains(
-                          " ui "
-                      ) ||
-                      check.Contains(
-                          "hud"
-                      ) ||
-                      check.Contains(
-                          "button"
-                      ) ||
-                      check.Contains(
-                          "sprite"
-                      )
-                  )
-                  {
-                      shader =
-                          Shader.Find(
-                              "UI/Default"
-                          );
-
-                      if (shader != null)
-                          return shader;
-                  }
-
-                  shader =
-                      Shader.Find(
-                          "Standard"
-                      );
-
-                  if (shader != null)
-                      return shader;
-
-                  shader =
-                      Shader.Find(
-                          "Unlit/Texture"
-                      );
-
-                  return shader;
-              }
-
-              private static void ConfigureReplacement(
-                  Material material,
-                  Shader replacement,
-                  string oldShaderName,
-                  int oldQueue
+          for path, prop in patched:
+              report += (
+                  "PATCH " +
+                  path +
+                  " -> " +
+                  prop +
+                  "\n"
               )
-              {
-                  string check =
-                      (
-                          material.name +
-                          " " +
-                          oldShaderName
-                      ).ToLowerInvariant();
 
-                  bool transparent =
-                      check.Contains(
-                          "glass"
-                      ) ||
-                      check.Contains(
-                          "window"
-                      ) ||
-                      check.Contains(
-                          "transparent"
-                      );
-
-                  if (
-                      replacement.name !=
-                      "Standard"
-                  )
-                  {
-                      if (oldQueue > 0)
-                      {
-                          material.renderQueue =
-                              oldQueue;
-                      }
-
-                      return;
-                  }
-
-                  if (!transparent)
-                  {
-                      material.SetFloat(
-                          "_Mode",
-                          0f
-                      );
-
-                      material.SetInt(
-                          "_SrcBlend",
-                          (
-                              int
-                          )
-                          BlendMode.One
-                      );
-
-                      material.SetInt(
-                          "_DstBlend",
-                          (
-                              int
-                          )
-                          BlendMode.Zero
-                      );
-
-                      material.SetInt(
-                          "_ZWrite",
-                          1
-                      );
-
-                      material.DisableKeyword(
-                          "_ALPHATEST_ON"
-                      );
-
-                      material.DisableKeyword(
-                          "_ALPHABLEND_ON"
-                      );
-
-                      material.DisableKeyword(
-                          "_ALPHAPREMULTIPLY_ON"
-                      );
-
-                      material.renderQueue =
-                          -1;
-
-                      return;
-                  }
-
-                  material.SetFloat(
-                      "_Mode",
-                      3f
-                  );
-
-                  material.SetInt(
-                      "_SrcBlend",
-                      (
-                          int
-                      )
-                      BlendMode.One
-                  );
-
-                  material.SetInt(
-                      "_DstBlend",
-                      (
-                          int
-                      )
-                      BlendMode.OneMinusSrcAlpha
-                  );
-
-                  material.SetInt(
-                      "_ZWrite",
-                      0
-                  );
-
-                  material.DisableKeyword(
-                      "_ALPHATEST_ON"
-                  );
-
-                  material.DisableKeyword(
-                      "_ALPHABLEND_ON"
-                  );
-
-                  material.EnableKeyword(
-                      "_ALPHAPREMULTIPLY_ON"
-                  );
-
-                  material.renderQueue =
-                      3000;
-              }
-
-              private static void RepairScenes()
-              {
-                  string[] scenePaths =
-                      AssetDatabase
-                          .FindAssets(
-                              "t:Scene"
-                          )
-                          .Select(
-                              AssetDatabase
-                                  .GUIDToAssetPath
-                          )
-                          .Where(
-                              p =>
-                                  p.EndsWith(
-                                      ".unity",
-                                      StringComparison
-                                          .OrdinalIgnoreCase
-                                  )
-                          )
-                          .Distinct()
-                          .ToArray();
-
-                  foreach (
-                      string scenePath
-                      in scenePaths
-                  )
-                  {
-                      Scene scene;
-
-                      try
-                      {
-                          scene =
-                              EditorSceneManager
-                                  .OpenScene(
-                                      scenePath,
-                                      OpenSceneMode.Single
-                                  );
-                      }
-                      catch (
-                          Exception ex
-                      )
-                      {
-                          Debug.LogWarning(
-                              "Could not open scene " +
-                              scenePath +
-                              ": " +
-                              ex.Message
-                          );
-
-                          continue;
-                      }
-
-                      bool changed =
-                          false;
-
-                      GameObject[] roots =
-                          scene
-                              .GetRootGameObjects();
-
-                      foreach (
-                          GameObject root
-                          in roots
-                      )
-                      {
-                          Transform[] objects =
-                              root
-                                  .GetComponentsInChildren<
-                                      Transform
-                                  >(
-                                      true
-                                  );
-
-                          foreach (
-                              Transform transform
-                              in objects
-                          )
-                          {
-                              GameObject go =
-                                  transform.gameObject;
-
-                              Terrain terrain =
-                                  go.GetComponent<
-                                      Terrain
-                                  >();
-
-                              if (
-                                  terrain != null &&
-                                  terrain.terrainData !=
-                                  null
-                              )
-                              {
-                                  TerrainCollider tc =
-                                      go.GetComponent<
-                                          TerrainCollider
-                                      >();
-
-                                  if (tc == null)
-                                  {
-                                      tc =
-                                          go.AddComponent<
-                                              TerrainCollider
-                                          >();
-
-                                      tc.terrainData =
-                                          terrain.terrainData;
-
-                                      terrainCollidersAdded++;
-
-                                      changed =
-                                          true;
-
-                                      Debug.Log(
-                                          "Added TerrainCollider: " +
-                                          HierarchyPath(
-                                              transform
-                                          )
-                                      );
-                                  }
-                                  else if (
-                                      !tc.enabled
-                                  )
-                                  {
-                                      tc.enabled =
-                                          true;
-
-                                      collidersEnabled++;
-
-                                      changed =
-                                          true;
-                                  }
-                              }
-
-                              if (
-                                  !LooksLikeDriveSurface(
-                                      go
-                                  )
-                              )
-                              {
-                                  continue;
-                              }
-
-                              Rigidbody rb =
-                                  go.GetComponentInParent<
-                                      Rigidbody
-                                  >();
-
-                              if (rb != null)
-                                  continue;
-
-                              Collider ownCollider =
-                                  go.GetComponent<
-                                      Collider
-                                  >();
-
-                              if (
-                                  ownCollider != null
-                              )
-                              {
-                                  if (
-                                      !ownCollider.enabled
-                                  )
-                                  {
-                                      ownCollider.enabled =
-                                          true;
-
-                                      collidersEnabled++;
-
-                                      changed =
-                                          true;
-                                  }
-
-                                  continue;
-                              }
-
-                              Collider parentCollider =
-                                  go.GetComponentInParent<
-                                      Collider
-                                  >();
-
-                              if (
-                                  parentCollider != null
-                              )
-                              {
-                                  continue;
-                              }
-
-                              Collider childCollider =
-                                  go.GetComponentInChildren<
-                                      Collider
-                                  >(
-                                      true
-                                  );
-
-                              if (
-                                  childCollider != null
-                              )
-                              {
-                                  continue;
-                              }
-
-                              MeshFilter filter =
-                                  go.GetComponent<
-                                      MeshFilter
-                                  >();
-
-                              MeshRenderer renderer =
-                                  go.GetComponent<
-                                      MeshRenderer
-                                  >();
-
-                              if (
-                                  filter == null ||
-                                  renderer == null ||
-                                  filter.sharedMesh ==
-                                  null
-                              )
-                              {
-                                  continue;
-                              }
-
-                              MeshCollider mc =
-                                  go.AddComponent<
-                                      MeshCollider
-                                  >();
-
-                              mc.sharedMesh =
-                                  filter.sharedMesh;
-
-                              mc.convex =
-                                  false;
-
-                              mc.isTrigger =
-                                  false;
-
-                              meshCollidersAdded++;
-
-                              changed =
-                                  true;
-
-                              Debug.Log(
-                                  "Added MeshCollider: " +
-                                  HierarchyPath(
-                                      transform
-                                  )
-                              );
-                          }
-                      }
-
-                      if (changed)
-                      {
-                          EditorSceneManager
-                              .MarkSceneDirty(
-                                  scene
-                              );
-
-                          EditorSceneManager
-                              .SaveScene(
-                                  scene
-                              );
-                      }
-                  }
-              }
-
-              private static bool LooksLikeDriveSurface(
-                  GameObject go
+          for item in skipped:
+              report += (
+                  "SKIP " +
+                  item +
+                  "\n"
               )
-              {
-                  string check =
-                      go.name
-                          .ToLowerInvariant();
 
-                  Renderer renderer =
-                      go.GetComponent<
-                          Renderer
-                      >();
+          output = Path(
+              os.environ["OUTPUT"]
+          )
 
-                  if (renderer != null)
-                  {
-                      Material[] materials =
-                          renderer.sharedMaterials;
+          (
+              output /
+              "v3.7-shader-repair.txt"
+          ).write_text(
+              report,
+              encoding="utf-8"
+          )
 
-                      foreach (
-                          Material material
-                          in materials
-                      )
-                      {
-                          if (material == null)
-                              continue;
+          print(report)
 
-                          check +=
-                              " " +
-                              material.name
-                                  .ToLowerInvariant();
-
-                          if (
-                              material.shader !=
-                              null
-                          )
-                          {
-                              check +=
-                                  " " +
-                                  material.shader.name
-                                      .ToLowerInvariant();
-                          }
-                      }
-                  }
-
-                  string[] keywords =
-                  {
-                      "road",
-                      "asphalt",
-                      "street",
-                      "highway",
-                      "ground",
-                      "track",
-                      "pavement",
-                      "terrain"
-                  };
-
-                  foreach (
-                      string keyword
-                      in keywords
-                  )
-                  {
-                      if (
-                          check.Contains(
-                              keyword
-                          )
-                      )
-                      {
-                          return true;
-                      }
-                  }
-
-                  return false;
-              }
-
-              private static string HierarchyPath(
-                  Transform transform
+          if len(patched) == 0:
+              print(
+                  "WARNING: no dummy shader required patching."
               )
-              {
-                  string value =
-                      transform.name;
+          PY
 
-                  Transform parent =
-                      transform.parent;
-
-                  while (
-                      parent != null
-                  )
-                  {
-                      value =
-                          parent.name +
-                          "/" +
-                          value;
-
-                      parent =
-                          parent.parent;
-                  }
-
-                  return value;
-              }
-
-              private static bool ContainsIgnoreCase(
-                  string value,
-                  string text
-              )
-              {
-                  if (
-                      String.IsNullOrEmpty(
-                          value
-                      )
-                  )
-                  {
-                      return false;
-                  }
-
-                  return value.IndexOf(
-                      text,
-                      StringComparison
-                          .OrdinalIgnoreCase
-                  ) >= 0;
-              }
-          }
-          CS
-
-      - name: Run v3.7 graphics and collision repair
-        shell: bash
-        env:
-          NFS_REPAIR_REPORT_PATH: ${{ github.workspace }}/nfs-output/v3.7-repair-report.txt
-        run: |
-          set +e
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-          LOG="$OUTPUT/unity-2019-v3.7-repair.log"
+          rm -rf \
+            "$PROJECT/Library/ShaderCache" \
+            "$PROJECT/Temp" \
+            "$PROJECT/obj" \
+            2>/dev/null || true
 
           echo \
-            "===== RUN v3.7 GRAPHICS/COLLISION REPAIR ====="
-
-          timeout 60m \
-            xvfb-run -a \
-            "$UNITY2019" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -projectPath "$PROJECT" \
-            -executeMethod \
-              NFSMWGraphicsRepair.Run \
-            -logFile "$LOG"
-
-          RC=$?
-
-          echo \
-            "V3_7_REPAIR_EXIT_CODE=$RC" \
-            | tee \
-              "$OUTPUT/v3.7-repair-exit-code.txt"
-
-          echo \
-            "===== REPAIR LOG TAIL ====="
-
-          tail -500 \
-            "$LOG" \
-            || true
-
-          echo \
-            "===== REPAIR SUMMARY ====="
-
-          cat \
-            "$OUTPUT/v3.7-repair-report.txt" \
-            2>/dev/null \
-            || true
-
-          if [ "$RC" -ne 0 ]; then
-
-            echo \
-              "===== REPAIR ERRORS ====="
-
-            grep -nEi \
-              -A 20 \
-              -B 10 \
-              'error CS[0-9]+|Scripts have compiler errors|Compilation failed|Exception|Fatal' \
-              "$LOG" \
-              | tail -1000 \
-              || true
-
-            exit "$RC"
-          fi
+            "v3.7 AssetRipper shader repair finished"
 
       - name: v3.7 final compile audit
         shell: bash
@@ -3101,9 +2091,6 @@ jobs:
           set -euo pipefail
 
           PROJECT="${{ steps.recover.outputs.project }}"
-
-          echo \
-            "===== v3.7 FINAL AUDIT ====="
 
           if grep -RIn \
             --include='*.cs' \
@@ -3127,28 +2114,12 @@ jobs:
             'System.IO.Path' \
             "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs"
 
-          test -s \
-            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWGraphicsRepair.cs"
-
-          echo \
-            "===== DUMMY SHADERS STILL PRESENT ====="
-
-          grep -RIl \
-            --include='*.shader' \
-            'DummyShaderTextExporter' \
-            "$PROJECT/Assets" \
-            | wc -l \
-            || true
-
-          echo \
-            "===== REPAIR REPORT ====="
-
           cat \
-            "$OUTPUT/v3.7-repair-report.txt" \
+            "$OUTPUT/v3.7-shader-repair.txt" \
             || true
 
           echo \
-            "v3.7 final audit: CLEAN"
+            "v3.7 final compile audit: CLEAN"
 
       - name: Build NFS Most Wanted iOS Xcode project
         id: unity_build
@@ -3159,16 +2130,8 @@ jobs:
           set +e
 
           PROJECT="${{ steps.recover.outputs.project }}"
+
           LOG="$OUTPUT/unity-2019-ios-build.log"
-
-          rm -rf \
-            "$PROJECT/Library/ScriptAssemblies" \
-            "$PROJECT/Temp" \
-            "$PROJECT/obj" \
-            2>/dev/null || true
-
-          echo \
-            "===== NFS MW VPREBORN iOS v3.7 ====="
 
           timeout 100m \
             xvfb-run -a \
@@ -3185,28 +2148,10 @@ jobs:
           RC=$?
 
           echo \
-            "UNITY2019_EXIT_CODE=$RC" \
-            | tee \
-              "$OUTPUT/unity-2019-exit-code.txt"
-
-          echo \
-            "===== UNITY BUILD LOG TAIL ====="
+            "UNITY2019_EXIT_CODE=$RC"
 
           tail -500 \
             "$LOG" \
-            || true
-
-          echo \
-            "===== IMPORTANT UNITY ERRORS ====="
-
-          grep -nEi \
-            -A 30 \
-            -B 10 \
-            'error CS[0-9]+|Compilation failed|compiler error|Scripts have compiler errors|Exception|Error building Player|BuildFailedException|DllNotFoundException|TypeLoadException|MissingReferenceException|Fatal error|Native extension for iOS target not found|failed' \
-            "$LOG" \
-            | tail -1600 \
-            | tee \
-              "$OUTPUT/unity-2019-important-errors.txt" \
             || true
 
           exit "$RC"
@@ -3236,24 +2181,6 @@ jobs:
             "ready=$READY" \
             >> "$GITHUB_OUTPUT"
 
-          {
-            echo "XCODE_READY=$READY"
-
-            if [ -d "$XCODE_OUT" ]; then
-
-              find "$XCODE_OUT" \
-                -maxdepth 3 \
-                \( \
-                  -name '*.xcodeproj' \
-                  -o -name '*.xcworkspace' \
-                  -o -name 'Info.plist' \
-                \) \
-                -print
-            fi
-
-          } | tee \
-            "$OUTPUT/xcode-detection.txt"
-
       - name: Pack Xcode project
         if: steps.detect_xcode.outputs.ready == 'true'
         shell: bash
@@ -3265,9 +2192,6 @@ jobs:
             -czf \
               "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.7-Xcode.tar.gz" \
             "$(basename "$XCODE_OUT")"
-
-          ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.7-Xcode.tar.gz"
 
       - name: Collect Unity diagnostics
         if: always()
@@ -3281,32 +2205,7 @@ jobs:
           mkdir -p "$DIAG"
 
           cp \
-            "$OUTPUT/apk-sha256.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/apk-summary.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/recovery-summary.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/assetripper.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2017-migration.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-install.log" \
+            "$OUTPUT/unity-2019-ios-build.log" \
             "$DIAG/" \
             2>/dev/null || true
 
@@ -3316,32 +2215,17 @@ jobs:
             2>/dev/null || true
 
           cp \
-            "$OUTPUT/unity-2019-v3.7-repair.log" \
+            "$OUTPUT/unity-2019-install.log" \
             "$DIAG/" \
             2>/dev/null || true
 
           cp \
-            "$OUTPUT/v3.7-repair-report.txt" \
+            "$OUTPUT/assetripper.log" \
             "$DIAG/" \
             2>/dev/null || true
 
           cp \
-            "$OUTPUT/v3.7-repair-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-ios-build.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-important-errors.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/xcode-detection.txt" \
+            "$OUTPUT/v3.7-shader-repair.txt" \
             "$DIAG/" \
             2>/dev/null || true
 
@@ -3355,7 +2239,6 @@ jobs:
         with:
           name: NFS-MW-VPREBORN-iOS-v3.7-Diagnostics
           path: NFS-MW-VPREBORN-iOS-v3.7-Diagnostics.zip
-          if-no-files-found: warn
           compression-level: 0
 
       - name: Upload Xcode project
@@ -3364,7 +2247,6 @@ jobs:
         with:
           name: NFS-MW-VPREBORN-iOS-v3.7-Xcode
           path: NFS-MW-VPREBORN-iOS-v3.7-Xcode.tar.gz
-          if-no-files-found: error
           compression-level: 0
 
       - name: Fail clearly if Unity did not export Xcode
@@ -3385,7 +2267,6 @@ jobs:
     timeout-minutes: 120
 
     steps:
-
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
@@ -3426,7 +2307,7 @@ jobs:
             -version
 
           echo \
-            "===== -mno-thumb BEFORE PATCH ====="
+            "===== SEARCH OLD -mno-thumb BEFORE PATCH ====="
 
           grep -RIn \
             -- '-mno-thumb' \
@@ -3466,7 +2347,6 @@ jobs:
               )
 
               if count:
-
                   print(
                       "Removing",
                       count,
@@ -3507,22 +2387,26 @@ jobs:
 
           for p in changed:
               print(
-                  " ",
+                  "  ",
                   p
               )
           PY
 
           echo \
-            "===== -mno-thumb AFTER FIRST PATCH ====="
+            "===== SEARCH OLD -mno-thumb AFTER PATCH ====="
 
           if grep -RIn \
             -- '-mno-thumb' \
             xcode
           then
             echo \
-              "::error::-mno-thumb still exists."
+              "::error::-mno-thumb still exists after Xcode patch."
+
             exit 1
           fi
+
+          echo \
+            "-mno-thumb audit: CLEAN"
 
           PBX="$(
             find xcode \
@@ -3533,7 +2417,9 @@ jobs:
           )"
 
           if [ -z "$PBX" ]; then
-            echo "::error::project.pbxproj not found."
+            echo \
+              "::error::project.pbxproj not found."
+
             exit 1
           fi
 
@@ -3588,11 +2474,12 @@ jobs:
           then
             echo \
               "::error::-mno-thumb returned after PBX patch."
+
             exit 1
           fi
 
           echo \
-            "Xcode legacy ARM flag repair: CLEAN"
+            "Xcode 16 legacy ARM flag repair: CLEAN"
 
       - name: Build unsigned app
         shell: bash
@@ -3619,16 +2506,20 @@ jobs:
           )"
 
           echo \
-            "===== FINAL LEGACY FLAG CHECK ====="
+            "===== FINAL FLAG CHECK BEFORE XCODEBUILD ====="
 
           if grep -RIn \
             -- '-mno-thumb' \
             xcode
           then
             echo \
-              "::error::Legacy -mno-thumb flag exists."
+              "::error::Legacy -mno-thumb flag still exists."
+
             exit 1
           fi
+
+          echo \
+            "No -mno-thumb flags remain."
 
           COMMON=(
             -scheme Unity-iPhone
@@ -3688,7 +2579,7 @@ jobs:
               "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt"
 
           echo \
-            "===== XCODE ERRORS ====="
+            "===== XCODE LOG ERRORS ====="
 
           grep -nEi \
             -A 12 \
