@@ -1,1319 +1,17 @@
-name: NFS Most Wanted VPREBORN iOS - v3.6 Modern Xcode Flag Repair
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  actions: read
-
-jobs:
-  recover_and_export:
-    name: 1. Recover APK, migrate 5.6 -> 2017 -> 2019, export iOS
-    runs-on: ubuntu-22.04
-    timeout-minutes: 210
-
-    env:
-      UNITY_USERNAME: ${{ secrets.UNITY_USERNAME }}
-      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-      UNITY_EMAIL: ${{ secrets.UNITY_USERNAME }}
-
-      SOURCE_UNITY: "5.6.4p2"
-      MIGRATION_UNITY: "2017.4.40f1"
-      MIGRATION_CHANGESET: "6e14067f8a9a"
-
-      BUILD_UNITY: "2019.4.40f1"
-      BUILD_CHANGESET: "ffc62b691db5"
-
-      WORK: ${{ github.workspace }}/nfs-work
-      APK: ${{ github.workspace }}/nfs-work/NFS-Most-Wanted-VPREBORN.apk
-      APKROOT: ${{ github.workspace }}/nfs-work/apk
-      RECOVERED: ${{ github.workspace }}/nfs-work/recovered
-      OUTPUT: ${{ github.workspace }}/nfs-output
-      XCODE_OUT: ${{ github.workspace }}/nfs-build/iOS/NFSMW-VPREBORN-iOS
-
-    outputs:
-      xcode_ready: ${{ steps.detect_xcode.outputs.ready }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Prepare folders
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf \
-            "$WORK" \
-            "$OUTPUT" \
-            "$GITHUB_WORKSPACE/nfs-build"
-
-          mkdir -p \
-            "$WORK" \
-            "$APKROOT" \
-            "$RECOVERED" \
-            "$OUTPUT" \
-            "$GITHUB_WORKSPACE/nfs-build/iOS"
-
-      - name: Install Linux runtime dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          sudo apt-get update \
-            -o Acquire::Retries=4
-
-          sudo DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y \
-            ca-certificates \
-            curl \
-            file \
-            git \
-            gnupg \
-            jq \
-            libasound2 \
-            libgconf-2-4 \
-            libglu1-mesa \
-            libgtk2.0-0 \
-            libgtk-3-0 \
-            libnss3 \
-            libxcomposite1 \
-            libxcursor1 \
-            libxdamage1 \
-            libxfixes3 \
-            libxi6 \
-            libxinerama1 \
-            libxrandr2 \
-            libxss1 \
-            libxtst6 \
-            libdrm2 \
-            libgbm1 \
-            p7zip-full \
-            python3 \
-            unzip \
-            xz-utils \
-            xvfb \
-            zip
-
-      - name: Find NFS Most Wanted APK automatically
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          echo "===== SEARCH APK IN REPOSITORY ====="
-
-          FOUND="$(
-            find "$GITHUB_WORKSPACE" \
-              -type f \
-              -iname '*.apk' \
-              ! -path "$WORK/*" \
-              -printf '%s %p\n' \
-              | sort -nr \
-              | head -1 \
-              | cut -d' ' -f2-
-          )"
-
-          if [ -n "${FOUND:-}" ] && [ -f "$FOUND" ]; then
-
-            if head -c 200 "$FOUND" 2>/dev/null \
-              | grep -q 'git-lfs.github.com/spec'
-            then
-              git lfs install --local || true
-              git lfs pull || true
-            fi
-
-            if [ -s "$FOUND" ] && \
-               ! head -c 200 "$FOUND" 2>/dev/null \
-                 | grep -q 'git-lfs.github.com/spec'
-            then
-              cp "$FOUND" "$APK"
-            fi
-          fi
-
-          if [ ! -s "$APK" ]; then
-
-            TAGS="$(
-              gh release list \
-                --repo "$GITHUB_REPOSITORY" \
-                --limit 100 \
-                --json tagName \
-                --jq '.[].tagName' \
-                2>/dev/null || true
-            )"
-
-            for TAG in $TAGS; do
-
-              rm -rf "$WORK/release-one"
-              mkdir -p "$WORK/release-one"
-
-              gh release download "$TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --pattern '*.apk' \
-                --dir "$WORK/release-one" \
-                2>/dev/null || true
-
-              CANDIDATE="$(
-                find "$WORK/release-one" \
-                  -type f \
-                  -iname '*.apk' \
-                  -printf '%s %p\n' \
-                  | sort -nr \
-                  | head -1 \
-                  | cut -d' ' -f2-
-              )"
-
-              if [ -n "${CANDIDATE:-}" ] && \
-                 [ -s "$CANDIDATE" ]
-              then
-                cp "$CANDIDATE" "$APK"
-                break
-              fi
-
-            done
-          fi
-
-          if [ ! -s "$APK" ]; then
-            echo "::error::No APK found."
-            exit 1
-          fi
-
-          ls -lh "$APK"
-
-          sha256sum "$APK" \
-            | tee "$OUTPUT/apk-sha256.txt"
-
-      - name: Verify exact VPREBORN base
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          unzip -oq \
-            "$APK" \
-            -d "$APKROOT"
-
-          DATA="$APKROOT/assets/bin/Data"
-          MANAGED="$DATA/Managed"
-
-          test -s "$DATA/globalgamemanagers"
-          test -s "$MANAGED/Assembly-CSharp.dll"
-          test -s "$MANAGED/Assembly-UnityScript.dll"
-
-          VERSION="$(
-            strings "$DATA/globalgamemanagers" \
-              | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+[abfp][0-9]+' \
-              | head -1
-          )"
-
-          echo "Detected Unity: $VERSION"
-
-          if [ "$VERSION" != "$SOURCE_UNITY" ]; then
-            echo "::error::Expected Unity $SOURCE_UNITY, got ${VERSION:-unknown}"
-            exit 1
-          fi
-
-          if find "$APKROOT" \
-            -type f \
-            -name 'libil2cpp.so' \
-            | grep -q .
-          then
-            echo "::error::Expected Mono APK, not IL2CPP."
-            exit 1
-          fi
-
-          if ! find "$APKROOT" \
-            -type f \
-            -name 'libmono.so' \
-            | grep -q .
-          then
-            echo "::error::libmono.so not found."
-            exit 1
-          fi
-
-          {
-            echo "APK_SIZE=$(stat -c%s "$APK")"
-            echo "UNITY_VERSION=$VERSION"
-            echo "ASSEMBLY_CSHARP_SIZE=$(stat -c%s "$MANAGED/Assembly-CSharp.dll")"
-            echo "ASSEMBLY_UNITYSCRIPT_SIZE=$(stat -c%s "$MANAGED/Assembly-UnityScript.dll")"
-
-            echo
-            echo "SCENES:"
-
-            strings "$DATA/globalgamemanagers" \
-              | grep -E 'Assets/.+\.unity$' \
-              | sort -u || true
-
-          } | tee "$OUTPUT/apk-summary.txt"
-
-      - name: Extract original APK icon
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ICON="$APKROOT/res/drawable-xxxhdpi-v4/app_icon.png"
-
-          if [ ! -s "$ICON" ]; then
-
-            ICON="$(
-              find "$APKROOT/res" \
-                -type f \
-                -iname 'app_icon.png' \
-                -printf '%s %p\n' \
-                | sort -nr \
-                | head -1 \
-                | cut -d' ' -f2-
-            )"
-
-          fi
-
-          if [ -z "${ICON:-}" ] || \
-             [ ! -s "$ICON" ]
-          then
-            echo "::error::Original app_icon.png not found."
-            exit 1
-          fi
-
-          cp \
-            "$ICON" \
-            "$OUTPUT/NFS-MW-VPREBORN-original-icon.png"
-
-      - name: Download AssetRipper 2.0.0
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p \
-            "$WORK/tools/assetripper"
-
-          gh release download 2.0.0 \
-            -R AssetRipper/AssetRipper \
-            -p 'AssetRipper_linux_x64.tar.xz' \
-            -D "$WORK/tools"
-
-          tar -xJf \
-            "$WORK/tools/AssetRipper_linux_x64.tar.xz" \
-            -C "$WORK/tools/assetripper"
-
-          RIPPER="$(
-            find "$WORK/tools/assetripper" \
-              -type f \
-              \( \
-                -name 'AssetRipper.GUI.Free' \
-                -o -name 'AssetRipper.GUI' \
-                -o -name 'AssetRipper' \
-              \) \
-              -print \
-              | head -1
-          )"
-
-          test -n "$RIPPER"
-
-          chmod +x "$RIPPER"
-
-          echo "RIPPER=$RIPPER" \
-            >> "$GITHUB_ENV"
-
-      - name: Recover editable Unity project
-        id: recover
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PORT=3333
-          EXPORT="$RECOVERED/NFSMW-VPREBORN"
-
-          mkdir -p "$EXPORT"
-
-          "$RIPPER" \
-            --headless \
-            --port "$PORT" \
-            > "$OUTPUT/assetripper.log" \
-            2>&1 &
-
-          PID=$!
-
-          trap \
-            'kill "$PID" 2>/dev/null || true' \
-            EXIT
-
-          READY=0
-
-          for i in $(seq 1 120); do
-
-            if curl -fsS \
-              "http://127.0.0.1:${PORT}/" \
-              >/dev/null \
-              2>&1
-            then
-              READY=1
-              break
-            fi
-
-            sleep 1
-
-          done
-
-          if [ "$READY" -ne 1 ]; then
-            echo "::error::AssetRipper did not start."
-            exit 1
-          fi
-
-          LOAD_CODE="$(
-            curl -sS \
-              -o "$OUTPUT/assetripper-load-response.txt" \
-              -w '%{http_code}' \
-              -H 'Content-Type: application/x-www-form-urlencoded' \
-              --data-urlencode "Path=$APKROOT" \
-              "http://127.0.0.1:${PORT}/LoadFolder"
-          )"
-
-          if [ "$LOAD_CODE" != "200" ] && \
-             [ "$LOAD_CODE" != "302" ]
-          then
-            echo "::error::AssetRipper LoadFolder failed."
-            exit 1
-          fi
-
-          EXPORT_CODE="$(
-            curl -sS \
-              -o "$OUTPUT/assetripper-export-response.txt" \
-              -w '%{http_code}' \
-              -H 'Content-Type: application/x-www-form-urlencoded' \
-              --data-urlencode "Path=$EXPORT" \
-              --data-urlencode 'CreateSubfolder=false' \
-              "http://127.0.0.1:${PORT}/Export/UnityProject"
-          )"
-
-          kill "$PID" 2>/dev/null || true
-          wait "$PID" 2>/dev/null || true
-          trap - EXIT
-
-          if [ "$EXPORT_CODE" != "200" ] && \
-             [ "$EXPORT_CODE" != "302" ]
-          then
-            echo "::error::AssetRipper export failed."
-            exit 1
-          fi
-
-          PROJECT=""
-
-          if [ -d "$EXPORT/ExportedProject/Assets" ]; then
-            PROJECT="$EXPORT/ExportedProject"
-
-          elif [ -d "$EXPORT/Assets" ]; then
-            PROJECT="$EXPORT"
-
-          else
-            PROJECT="$(
-              find "$EXPORT" \
-                -type d \
-                -name Assets \
-                -print \
-                | head -1 \
-                | xargs -r dirname
-            )"
-          fi
-
-          if [ -z "$PROJECT" ] || \
-             [ ! -d "$PROJECT/Assets" ]
-          then
-            echo "::error::Recovered Unity project not found."
-            exit 1
-          fi
-
-          PROJECT="$(realpath "$PROJECT")"
-
-          echo "project=$PROJECT" \
-            >> "$GITHUB_OUTPUT"
-
-          echo "PROJECT=$PROJECT" \
-            >> "$GITHUB_ENV"
-
-          {
-            echo "RECOVERED_PROJECT=$PROJECT"
-            echo "SCENES=$(find "$PROJECT/Assets" -type f -name '*.unity' | wc -l | tr -d ' ')"
-            echo "CS_FILES=$(find "$PROJECT/Assets" -type f -name '*.cs' | wc -l | tr -d ' ')"
-          } | tee "$OUTPUT/recovery-summary.txt"
-
-      - name: Sanitize recovered Android project
+      - name: v3.7 Repair graphics materials and road collisions
         shell: bash
         run: |
           set -euo pipefail
 
           PROJECT="${{ steps.recover.outputs.project }}"
 
-          find "$PROJECT/Assets" \
-            -type f \
-            \( \
-              -iname '*.so' \
-              -o -iname '*.aar' \
-              -o -iname '*.jar' \
-              -o -iname '*.apk' \
-            \) \
-            -delete || true
-
-          rm -rf \
-            "$PROJECT/Assets/Plugins/Android" \
-            || true
-
-          python3 - <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
-
-          project = Path(
-              os.environ["PROJECT"]
-          )
-
-          assets = project / "Assets"
-
-          moved = (
-              project.parent /
-              "removed-runtime-dlls"
-          )
-
-          moved.mkdir(
-              parents=True,
-              exist_ok=True
-          )
-
-          runtime_names = {
-              "UnityEngine.dll",
-              "UnityEngine.UI.dll",
-              "UnityEngine.Networking.dll",
-              "UnityEngine.Advertisements.Android.dll",
-              "mscorlib.dll",
-              "System.dll",
-              "System.Core.dll",
-              "Mono.Security.dll",
-              "Assembly-CSharp.dll",
-              "Assembly-UnityScript.dll",
-          }
-
-          for p in list(
-              assets.rglob("*.dll")
-          ):
-
-              if p.name not in runtime_names:
-                  continue
-
-              rel = p.relative_to(
-                  assets
-              )
-
-              dst = moved / rel
-
-              dst.parent.mkdir(
-                  parents=True,
-                  exist_ok=True
-              )
-
-              shutil.move(
-                  str(p),
-                  str(dst)
-              )
-
-              meta = Path(
-                  str(p) + ".meta"
-              )
-
-              if meta.exists():
-                  shutil.move(
-                      str(meta),
-                      str(dst) + ".meta"
-                  )
-          PY
-
-          mkdir -p \
-            "$PROJECT/Assets/NFSMWiOS/Editor"
-
-          cp \
-            "$OUTPUT/NFS-MW-VPREBORN-original-icon.png" \
-            "$PROJECT/Assets/NFSMWiOS/app_icon.png"
-
-          cat > \
-            "$PROJECT/ProjectSettings/ProjectVersion.txt" \
-            <<'EOF'
-          m_EditorVersion: 2017.4.40f1
-          m_EditorVersionWithRevision: 2017.4.40f1 (6e14067f8a9a)
-          EOF
-
-      - name: Repair old Unity 5.6 scripts before migration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          find "$PROJECT/Assets" \
-            -type f \
-            -path '*/Properties/AssemblyInfo.cs' \
-            -delete || true
-
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          project = Path(
-              os.environ["PROJECT"]
-          )
-
-          for p in (
-              project / "Assets"
-          ).rglob("*.cs"):
-
-              s = p.read_text(
-                  encoding="utf-8",
-                  errors="replace"
-              )
-
-              old = s
-
-              s = re.sub(
-                  r'^\s*using\s+UnityScript\s*;\s*$',
-                  '',
-                  s,
-                  flags=re.M
-              )
-
-              if re.search(
-                  r'^\s*using\s+System\.Diagnostics\s*;',
-                  s,
-                  flags=re.M
-              ):
-                  s = re.sub(
-                      r'(?<![\w.])Debug\.',
-                      'UnityEngine.Debug.',
-                      s
-                  )
-
-              s = s.replace(
-                  'UnityEngine.Advertisements.Android',
-                  'UnityEngine.Advertisements'
-              )
-
-              if s != old:
-                  p.write_text(
-                      s,
-                      encoding="utf-8"
-                  )
-          PY
-
-          mkdir -p \
-            "$PROJECT/Assets/NFSMWiOS"
-
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/UnityAdsCompatibilityStub.cs" \
-            <<'CS'
-          using System;
-
-          namespace UnityEngine.Advertisements
-          {
-              public enum ShowResult
-              {
-                  Failed,
-                  Skipped,
-                  Finished
-              }
-
-              public sealed class ShowOptions
-              {
-                  public Action<ShowResult> resultCallback;
-              }
-
-              public static class Advertisement
-              {
-                  public static bool isSupported
-                  {
-                      get { return true; }
-                  }
-
-                  public static bool isInitialized
-                  {
-                      get { return true; }
-                  }
-
-                  public static bool IsInitialized()
-                  {
-                      return true;
-                  }
-
-                  public static void Initialize(
-                      string gameId
-                  )
-                  {
-                  }
-
-                  public static void Initialize(
-                      string gameId,
-                      bool testMode
-                  )
-                  {
-                  }
-
-                  public static bool IsReady()
-                  {
-                      return true;
-                  }
-
-                  public static bool IsReady(
-                      string placementId
-                  )
-                  {
-                      return true;
-                  }
-
-                  public static void Show()
-                  {
-                  }
-
-                  public static void Show(
-                      string placementId
-                  )
-                  {
-                  }
-
-                  public static void Show(
-                      ShowOptions options
-                  )
-                  {
-                      if (
-                          options != null &&
-                          options.resultCallback != null
-                      )
-                      {
-                          options.resultCallback(
-                              ShowResult.Finished
-                          );
-                      }
-                  }
-
-                  public static void Show(
-                      string placementId,
-                      ShowOptions options
-                  )
-                  {
-                      if (
-                          options != null &&
-                          options.resultCallback != null
-                      )
-                      {
-                          options.resultCallback(
-                              ShowResult.Finished
-                          );
-                      }
-                  }
-              }
-          }
-          CS
-
-      - name: Setup Node 22 and Unity licensing helper
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install Unity Hub and activation helper
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          npm install -g \
-            @rage-against-the-pixel/unity-cli
-
-          sudo install \
-            -d \
-            -m 0755 \
-            /etc/apt/keyrings
-
-          curl -fsSL \
-            https://hub.unity3d.com/linux/keys/public \
-            | sudo gpg \
-                --dearmor \
-                -o /etc/apt/keyrings/unityhub.gpg
-
-          echo \
-            "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
-            | sudo tee \
-                /etc/apt/sources.list.d/unityhub.list \
-                >/dev/null
-
-          sudo apt-get update \
-            -o Acquire::Retries=4 \
-            || true
-
-          sudo apt-get install -y \
-            unityhub
-
-          HUB_CMD="$(
-            command -v unityhub
-          )"
-
-          sudo mkdir -p \
-            /opt/unityhub
-
-          sudo tee \
-            /opt/unityhub/unityhub \
-            >/dev/null <<EOF
-          #!/bin/bash
-          exec xvfb-run -a "$HUB_CMD" --no-sandbox --headless "\$@"
-          EOF
-
-          sudo chmod +x \
-            /opt/unityhub/unityhub
-
-      - name: Activate Unity Personal
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          CLIENT="$(
-            find /usr /opt "$HOME" \
-              -type f \
-              -name 'Unity.Licensing.Client' \
-              2>/dev/null \
-              | head -1
-          )"
-
-          if [ -n "${CLIENT:-}" ]; then
-
-            CLIENT_DIR="$(
-              dirname "$CLIENT"
-            )"
-
-            sudo mkdir -p \
-              /opt/unityhub/UnityLicensingClient
-
-            sudo cp -a \
-              "$CLIENT_DIR"/. \
-              /opt/unityhub/UnityLicensingClient/
-
-            sudo chmod +x \
-              /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client \
-              || true
-          fi
-
-          GLOBAL_NODE_MODULES="$(
-            npm root -g
-          )"
-
-          LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
-
-          export LICENSE_MODULE
-
-          node <<'NODE'
-          const {
-            LicensingClient,
-            LicenseType
-          } = require(
-            process.env.LICENSE_MODULE
-          );
-
-          async function main() {
-
-            const client =
-              new LicensingClient(
-                '6.x'
-              );
-
-            await client.Activate(
-              {
-                licenseType:
-                  LicenseType.personal,
-
-                username:
-                  process.env.UNITY_USERNAME,
-
-                password:
-                  process.env.UNITY_PASSWORD
-              },
-              true
-            );
-
-            console.log(
-              "UNITY PERSONAL ACTIVATION: SUCCESS"
-            );
-          }
-
-          main().catch((e) => {
-
-            console.error(e);
-
-            process.exit(1);
-
-          });
-          NODE
-
-      - name: Install Unity 2017.4.40f1
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p \
-            "$WORK/unity-2017"
-
-          URL="https://download.unity3d.com/download_unity/${MIGRATION_CHANGESET}/LinuxEditorInstaller/Unity-${MIGRATION_UNITY}.tar.xz"
-
-          curl -fL \
-            --retry 5 \
-            --retry-delay 5 \
-            "$URL" \
-            -o "$WORK/Unity-${MIGRATION_UNITY}.tar.xz"
-
-          tar -xJf \
-            "$WORK/Unity-${MIGRATION_UNITY}.tar.xz" \
-            -C "$WORK/unity-2017"
-
-          UNITY2017="$(
-            find "$WORK/unity-2017" \
-              -type f \
-              -path '*/Editor/Unity' \
-              -perm -111 \
-              -print \
-              | head -1
-          )"
-
-          test -n "$UNITY2017"
-
-          echo "UNITY2017=$UNITY2017" \
-            >> "$GITHUB_ENV"
-
-      - name: Unity 2017 compatibility migration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          LOG="$OUTPUT/unity-2017-migration.log"
-
-          rm -rf \
-            "$PROJECT/Library/ScriptAssemblies" \
-            "$PROJECT/Temp" \
-            "$PROJECT/obj" \
-            2>/dev/null || true
-
-          set +e
-
-          timeout 75m \
-            xvfb-run -a \
-            "$UNITY2017" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -projectPath "$PROJECT" \
-            -logFile "$LOG"
-
-          RC=$?
-
-          set -e
-
-          if grep -qE \
-            'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
-            "$LOG"
-          then
-            grep -nEi \
-              -A 10 \
-              -B 5 \
-              'error CS[0-9]+|Scripts have compiler errors|Compilation failed' \
-              "$LOG" \
-              | tail -1000
-
-            exit 1
-          fi
-
-          echo \
-            "Unity 2017 migration completed with RC=$RC"
-
-      - name: Prepare migrated project for Unity 2019 iOS
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          mkdir -p "$PROJECT/Packages"
-
-          cat > \
-            "$PROJECT/Packages/manifest.json" \
-            <<'JSON'
-          {
-            "dependencies": {
-              "com.unity.ugui": "1.0.0",
-              "com.unity.modules.ai": "1.0.0",
-              "com.unity.modules.animation": "1.0.0",
-              "com.unity.modules.assetbundle": "1.0.0",
-              "com.unity.modules.audio": "1.0.0",
-              "com.unity.modules.cloth": "1.0.0",
-              "com.unity.modules.director": "1.0.0",
-              "com.unity.modules.imageconversion": "1.0.0",
-              "com.unity.modules.imgui": "1.0.0",
-              "com.unity.modules.jsonserialize": "1.0.0",
-              "com.unity.modules.particlesystem": "1.0.0",
-              "com.unity.modules.physics": "1.0.0",
-              "com.unity.modules.physics2d": "1.0.0",
-              "com.unity.modules.screencapture": "1.0.0",
-              "com.unity.modules.terrain": "1.0.0",
-              "com.unity.modules.terrainphysics": "1.0.0",
-              "com.unity.modules.tilemap": "1.0.0",
-              "com.unity.modules.ui": "1.0.0",
-              "com.unity.modules.uielements": "1.0.0",
-              "com.unity.modules.umbra": "1.0.0",
-              "com.unity.modules.unityanalytics": "1.0.0",
-              "com.unity.modules.unitywebrequest": "1.0.0",
-              "com.unity.modules.unitywebrequestassetbundle": "1.0.0",
-              "com.unity.modules.unitywebrequestaudio": "1.0.0",
-              "com.unity.modules.unitywebrequesttexture": "1.0.0",
-              "com.unity.modules.unitywebrequestwww": "1.0.0",
-              "com.unity.modules.vehicles": "1.0.0",
-              "com.unity.modules.video": "1.0.0",
-              "com.unity.modules.vr": "1.0.0",
-              "com.unity.modules.wind": "1.0.0",
-              "com.unity.modules.xr": "1.0.0"
-            }
-          }
-          JSON
-
-          rm -f \
-            "$PROJECT/Packages/packages-lock.json" \
-            || true
-
-          cat > \
-            "$PROJECT/ProjectSettings/ProjectVersion.txt" \
-            <<'EOF'
-          m_EditorVersion: 2019.4.40f1
-          m_EditorVersionWithRevision: 2019.4.40f1 (ffc62b691db5)
-          EOF
-
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          project = Path(
-              os.environ["PROJECT"]
-          )
-
-          assets = project / "Assets"
-
-          for p in assets.rglob("*.cs"):
-
-              s = p.read_text(
-                  encoding="utf-8",
-                  errors="replace"
-              )
-
-              old = s
-
-              s = re.sub(
-                  r'\bGUIText\b',
-                  'UnityEngine.UI.Text',
-                  s
-              )
-
-              s = re.sub(
-                  r'\bGUITexture\b',
-                  'UnityEngine.UI.RawImage',
-                  s
-              )
-
-              s = s.replace(
-                  'Graphics.DrawProceduralIndirect(',
-                  'Graphics.DrawProceduralIndirectNow('
-              )
-
-              s = s.replace(
-                  'ComputeBufferType.DrawIndirect',
-                  'ComputeBufferType.IndirectArguments'
-              )
-
-              s = re.sub(
-                  r'^\s*using\s+UnityScript\s*;\s*$',
-                  '',
-                  s,
-                  flags=re.M
-              )
-
-              s = re.sub(
-                  r'^\s*using\s+UnityScript\.Lang\s*;\s*$',
-                  '',
-                  s,
-                  flags=re.M
-              )
-
-              if re.search(
-                  r'^\s*using\s+System\.Diagnostics\s*;',
-                  s,
-                  flags=re.M
-              ):
-                  s = re.sub(
-                      r'(?<![\w.])Debug\.',
-                      'UnityEngine.Debug.',
-                      s
-                  )
-
-              s = re.sub(
-                  r'^\s*using\s+UnityEngine\.Android\s*;\s*$',
-                  '',
-                  s,
-                  flags=re.M
-              )
-
-              s = s.replace(
-                  'UnityEngine.Advertisements.Android',
-                  'UnityEngine.Advertisements'
-              )
-
-              if p.name in {
-                  "RCC_CameraConfig.cs",
-                  "RCC_GetBounds.cs",
-              }:
-                  s = re.sub(
-                      r'\bParticleRenderer\b',
-                      'ParticleSystemRenderer',
-                      s
-                  )
-
-              s = s.replace(
-                  'Application.LoadLevelAsync(',
-                  'UnityEngine.SceneManagement.SceneManager.LoadSceneAsync('
-              )
-
-              s = s.replace(
-                  'Application.LoadLevel(',
-                  'UnityEngine.SceneManagement.SceneManager.LoadScene('
-              )
-
-              s = s.replace(
-                  'Application.loadedLevelName',
-                  'UnityEngine.SceneManagement.SceneManager.GetActiveScene().name'
-              )
-
-              s = s.replace(
-                  'Application.loadedLevel',
-                  'UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex'
-              )
-
-              if s != old:
-                  p.write_text(
-                      s,
-                      encoding="utf-8"
-                  )
-          PY
+          echo "===== NFS MW v3.7 GRAPHICS + COLLISION REPAIR ====="
 
           mkdir -p \
             "$PROJECT/Assets/NFSMWiOS/Editor"
 
           cat > \
-            "$PROJECT/Assets/NFSMWiOS/UnityScriptExtensionsCompatibility.cs" \
-            <<'CS'
-          using System;
-          using System.Collections;
-
-          public static class Extensions
-          {
-              public static int get_length(
-                  Array value
-              )
-              {
-                  return value == null
-                      ? 0
-                      : value.Length;
-              }
-
-              public static int get_length(
-                  string value
-              )
-              {
-                  return value == null
-                      ? 0
-                      : value.Length;
-              }
-
-              public static int get_length(
-                  ICollection value
-              )
-              {
-                  return value == null
-                      ? 0
-                      : value.Count;
-              }
-
-              public static int get_length(
-                  object value
-              )
-              {
-                  if (value == null)
-                      return 0;
-
-                  Array a =
-                      value as Array;
-
-                  if (a != null)
-                      return a.Length;
-
-                  string s =
-                      value as string;
-
-                  if (s != null)
-                      return s.Length;
-
-                  ICollection c =
-                      value as ICollection;
-
-                  if (c != null)
-                      return c.Count;
-
-                  return 0;
-              }
-          }
-          CS
-
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/NFSMWRuntimeLogger.cs" \
-            <<'CS'
-          using System;
-          using System.IO;
-
-          using UnityEngine;
-          using UnityEngine.SceneManagement;
-
-          public sealed class NFSMWRuntimeLogger :
-              MonoBehaviour
-          {
-              private string logPath;
-
-              [RuntimeInitializeOnLoadMethod(
-                  RuntimeInitializeLoadType.BeforeSceneLoad
-              )]
-              private static void Install()
-              {
-                  if (
-                      FindObjectOfType<
-                          NFSMWRuntimeLogger
-                      >() != null
-                  )
-                      return;
-
-                  var go =
-                      new GameObject(
-                          "NFSMW-iOS-Stability"
-                      );
-
-                  DontDestroyOnLoad(go);
-
-                  go.AddComponent<
-                      NFSMWRuntimeLogger
-                  >();
-              }
-
-              private void Awake()
-              {
-                  logPath =
-                      System.IO.Path.Combine(
-                          Application.persistentDataPath,
-                          "nfs-mw-ios-runtime.log"
-                      );
-
-                  Screen.sleepTimeout =
-                      SleepTimeout.NeverSleep;
-
-                  Input.multiTouchEnabled =
-                      true;
-
-                  QualitySettings.vSyncCount =
-                      0;
-
-                  Application.targetFrameRate =
-                      60;
-
-                  Application.logMessageReceived +=
-                      OnLog;
-
-                  Application.lowMemory +=
-                      OnLowMemory;
-
-                  SceneManager.sceneLoaded +=
-                      OnSceneLoaded;
-              }
-
-              private void OnDestroy()
-              {
-                  Application.logMessageReceived -=
-                      OnLog;
-
-                  Application.lowMemory -=
-                      OnLowMemory;
-
-                  SceneManager.sceneLoaded -=
-                      OnSceneLoaded;
-              }
-
-              private void OnLowMemory()
-              {
-                  Resources.UnloadUnusedAssets();
-              }
-
-              private void OnSceneLoaded(
-                  Scene scene,
-                  LoadSceneMode mode
-              )
-              {
-                  Write(
-                      "SCENE_LOADED " +
-                      scene.name
-                  );
-              }
-
-              private void OnLog(
-                  string condition,
-                  string stackTrace,
-                  LogType type
-              )
-              {
-                  if (type == LogType.Log)
-                      return;
-
-                  Write(
-                      "[" +
-                      type +
-                      "] " +
-                      condition +
-                      "\n" +
-                      stackTrace
-                  );
-              }
-
-              private void Write(
-                  string message
-              )
-              {
-                  try
-                  {
-                      File.AppendAllText(
-                          logPath,
-                          "[" +
-                          DateTime.UtcNow.ToString("O") +
-                          "] " +
-                          message +
-                          "\n"
-                      );
-                  }
-                  catch
-                  {
-                  }
-              }
-          }
-          CS
-
-          cat > \
-            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs" \
+            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWGraphicsRepair.cs" \
             <<'CS'
           using System;
           using System.IO;
@@ -1321,117 +19,588 @@ jobs:
           using System.Collections.Generic;
 
           using UnityEditor;
-          using UnityEditor.Build.Reporting;
+          using UnityEditor.SceneManagement;
 
           using UnityEngine;
-          using UnityEngine.Rendering;
+          using UnityEngine.SceneManagement;
 
-          public static class NFSMWiOSBuild
+          public static class NFSMWGraphicsRepair
           {
-              public static void PerformBuild()
+              private static int materialsScanned;
+              private static int materialsRepaired;
+              private static int collidersAdded;
+              private static int collidersEnabled;
+
+              public static void Run()
               {
-                  string output =
-                      Environment.GetEnvironmentVariable(
-                          "NFS_IOS_XCODE_PATH"
+                  Debug.Log(
+                      "===== NFS MW v3.7 REPAIR START ====="
+                  );
+
+                  RepairMaterials();
+                  RepairScenes();
+
+                  AssetDatabase.SaveAssets();
+                  AssetDatabase.Refresh();
+
+                  Debug.Log(
+                      "===== NFS MW v3.7 REPAIR RESULT ===== " +
+                      "materialsScanned=" +
+                      materialsScanned +
+                      " materialsRepaired=" +
+                      materialsRepaired +
+                      " collidersAdded=" +
+                      collidersAdded +
+                      " collidersEnabled=" +
+                      collidersEnabled
+                  );
+              }
+
+              private static void RepairMaterials()
+              {
+                  string[] guids =
+                      AssetDatabase.FindAssets(
+                          "t:Material"
+                      );
+
+                  foreach (
+                      string guid
+                      in guids
+                  )
+                  {
+                      string path =
+                          AssetDatabase.GUIDToAssetPath(
+                              guid
+                          );
+
+                      Material material =
+                          AssetDatabase.LoadAssetAtPath<
+                              Material
+                          >(
+                              path
+                          );
+
+                      if (material == null)
+                          continue;
+
+                      materialsScanned++;
+
+                      Shader oldShader =
+                          material.shader;
+
+                      bool broken =
+                          oldShader == null;
+
+                      bool dummy =
+                          IsAssetRipperDummyShader(
+                              oldShader
+                          );
+
+                      bool errorShader =
+                          oldShader != null &&
+                          oldShader.name ==
+                          "Hidden/InternalErrorShader";
+
+                      if (
+                          !broken &&
+                          !dummy &&
+                          !errorShader
+                      )
+                      {
+                          continue;
+                      }
+
+                      string oldShaderName =
+                          oldShader != null
+                              ? oldShader.name
+                              : "";
+
+                      if (
+                          Contains(
+                              oldShaderName,
+                              "Skybox"
+                          ) ||
+                          Contains(
+                              material.name,
+                              "Skybox"
+                          )
+                      )
+                      {
+                          continue;
+                      }
+
+                      Texture primaryTexture =
+                          FindBestTexture(
+                              material,
+                              oldShader
+                          );
+
+                      Color oldColor =
+                          Color.white;
+
+                      if (
+                          material.HasProperty(
+                              "_Color"
+                          )
+                      )
+                      {
+                          oldColor =
+                              material.GetColor(
+                                  "_Color"
+                              );
+                      }
+
+                      Shader replacement =
+                          FindReplacementShader(
+                              material,
+                              oldShaderName
+                          );
+
+                      if (
+                          replacement == null
+                      )
+                      {
+                          Debug.LogWarning(
+                              "No replacement shader for " +
+                              path +
+                              " oldShader=" +
+                              oldShaderName
+                          );
+
+                          continue;
+                      }
+
+                      material.shader =
+                          replacement;
+
+                      if (
+                          primaryTexture != null &&
+                          material.HasProperty(
+                              "_MainTex"
+                          )
+                      )
+                      {
+                          material.SetTexture(
+                              "_MainTex",
+                              primaryTexture
+                          );
+                      }
+
+                      if (
+                          material.HasProperty(
+                              "_Color"
+                          )
+                      )
+                      {
+                          material.SetColor(
+                              "_Color",
+                              oldColor
+                          );
+                      }
+
+                      if (
+                          replacement.name ==
+                          "Standard"
+                      )
+                      {
+                          SetupStandardMaterial(
+                              material,
+                              oldShaderName
+                          );
+                      }
+
+                      EditorUtility.SetDirty(
+                          material
+                      );
+
+                      materialsRepaired++;
+
+                      Debug.Log(
+                          "Repaired material: " +
+                          path +
+                          " | " +
+                          oldShaderName +
+                          " -> " +
+                          replacement.name +
+                          " | texture=" +
+                          (
+                              primaryTexture != null
+                                  ? primaryTexture.name
+                                  : "NONE"
+                          )
+                      );
+                  }
+              }
+
+              private static bool IsAssetRipperDummyShader(
+                  Shader shader
+              )
+              {
+                  if (shader == null)
+                      return false;
+
+                  string path =
+                      AssetDatabase.GetAssetPath(
+                          shader
                       );
 
                   if (
                       String.IsNullOrEmpty(
-                          output
+                          path
+                      ) ||
+                      !File.Exists(
+                          path
                       )
                   )
                   {
-                      throw new Exception(
-                          "NFS_IOS_XCODE_PATH is missing."
-                      );
+                      return false;
                   }
 
-                  Directory.CreateDirectory(
-                      output
+                  try
+                  {
+                      string text =
+                          File.ReadAllText(
+                              path
+                          );
+
+                      return text.Contains(
+                          "DummyShaderTextExporter"
+                      );
+                  }
+                  catch
+                  {
+                      return false;
+                  }
+              }
+
+              private static Texture FindBestTexture(
+                  Material material,
+                  Shader shader
+              )
+              {
+                  if (material == null)
+                      return null;
+
+                  string[] preferredNames =
+                  {
+                      "_MainTex",
+                      "_BaseMap",
+                      "_BaseTex",
+                      "_Diffuse",
+                      "_DiffuseTex",
+                      "_Albedo",
+                      "_AlbedoTex",
+                      "_Texture",
+                      "_Tex",
+                      "_ColorMap",
+                      "_DetailTex"
+                  };
+
+                  foreach (
+                      string name
+                      in preferredNames
+                  )
+                  {
+                      if (
+                          material.HasProperty(
+                              name
+                          )
+                      )
+                      {
+                          Texture tex =
+                              material.GetTexture(
+                                  name
+                              );
+
+                          if (tex != null)
+                              return tex;
+                      }
+                  }
+
+                  if (shader == null)
+                      return null;
+
+                  try
+                  {
+                      int count =
+                          ShaderUtil
+                              .GetPropertyCount(
+                                  shader
+                              );
+
+                      for (
+                          int i = 0;
+                          i < count;
+                          i++
+                      )
+                      {
+                          if (
+                              ShaderUtil
+                                  .GetPropertyType(
+                                      shader,
+                                      i
+                                  ) !=
+                              ShaderUtil
+                                  .ShaderPropertyType
+                                  .TexEnv
+                          )
+                          {
+                              continue;
+                          }
+
+                          string property =
+                              ShaderUtil
+                                  .GetPropertyName(
+                                      shader,
+                                      i
+                                  );
+
+                          Texture tex =
+                              material.GetTexture(
+                                  property
+                              );
+
+                          if (tex != null)
+                              return tex;
+                      }
+                  }
+                  catch
+                  {
+                  }
+
+                  return null;
+              }
+
+              private static Shader FindReplacementShader(
+                  Material material,
+                  string oldShaderName
+              )
+              {
+                  string combined =
+                      (
+                          material.name +
+                          " " +
+                          oldShaderName
+                      ).ToLowerInvariant();
+
+                  Shader shader;
+
+                  if (
+                      combined.Contains(
+                          "ui"
+                      ) ||
+                      combined.Contains(
+                          "hud"
+                      ) ||
+                      combined.Contains(
+                          "button"
+                      ) ||
+                      combined.Contains(
+                          "sprite"
+                      )
+                  )
+                  {
+                      shader =
+                          Shader.Find(
+                              "UI/Default"
+                          );
+
+                      if (shader != null)
+                          return shader;
+                  }
+
+                  if (
+                      combined.Contains(
+                          "glass"
+                      ) ||
+                      combined.Contains(
+                          "window"
+                      ) ||
+                      combined.Contains(
+                          "transparent"
+                      ) ||
+                      combined.Contains(
+                          "alpha"
+                      )
+                  )
+                  {
+                      shader =
+                          Shader.Find(
+                              "Legacy Shaders/Transparent/Diffuse"
+                          );
+
+                      if (shader != null)
+                          return shader;
+
+                      shader =
+                          Shader.Find(
+                              "Unlit/Transparent"
+                          );
+
+                      if (shader != null)
+                          return shader;
+                  }
+
+                  if (
+                      combined.Contains(
+                          "particle"
+                      )
+                  )
+                  {
+                      shader =
+                          Shader.Find(
+                              "Particles/Standard Unlit"
+                          );
+
+                      if (shader != null)
+                          return shader;
+                  }
+
+                  shader =
+                      Shader.Find(
+                          "Standard"
+                      );
+
+                  if (shader != null)
+                      return shader;
+
+                  shader =
+                      Shader.Find(
+                          "Unlit/Texture"
+                      );
+
+                  return shader;
+              }
+
+              private static void SetupStandardMaterial(
+                  Material material,
+                  string oldShaderName
+              )
+              {
+                  string name =
+                      (
+                          material.name +
+                          " " +
+                          oldShaderName
+                      ).ToLowerInvariant();
+
+                  bool transparent =
+                      name.Contains(
+                          "glass"
+                      ) ||
+                      name.Contains(
+                          "window"
+                      ) ||
+                      name.Contains(
+                          "transparent"
+                      ) ||
+                      name.Contains(
+                          "alpha"
+                      );
+
+                  if (!transparent)
+                  {
+                      material.SetFloat(
+                          "_Mode",
+                          0f
+                      );
+
+                      material.SetInt(
+                          "_SrcBlend",
+                          (
+                              int
+                          )
+                          UnityEngine
+                              .Rendering
+                              .BlendMode
+                              .One
+                      );
+
+                      material.SetInt(
+                          "_DstBlend",
+                          (
+                              int
+                          )
+                          UnityEngine
+                              .Rendering
+                              .BlendMode
+                              .Zero
+                      );
+
+                      material.SetInt(
+                          "_ZWrite",
+                          1
+                      );
+
+                      material.DisableKeyword(
+                          "_ALPHATEST_ON"
+                      );
+
+                      material.DisableKeyword(
+                          "_ALPHABLEND_ON"
+                      );
+
+                      material.DisableKeyword(
+                          "_ALPHAPREMULTIPLY_ON"
+                      );
+
+                      material.renderQueue =
+                          -1;
+
+                      return;
+                  }
+
+                  material.SetFloat(
+                      "_Mode",
+                      3f
                   );
 
-                  EditorUserBuildSettings
-                      .SwitchActiveBuildTarget(
-                          BuildTargetGroup.iOS,
-                          BuildTarget.iOS
-                      );
+                  material.SetInt(
+                      "_SrcBlend",
+                      (
+                          int
+                      )
+                      UnityEngine
+                          .Rendering
+                          .BlendMode
+                          .One
+                  );
 
-                  PlayerSettings.companyName =
-                      "VPREBORN iOS Port";
+                  material.SetInt(
+                      "_DstBlend",
+                      (
+                          int
+                      )
+                      UnityEngine
+                          .Rendering
+                          .BlendMode
+                          .OneMinusSrcAlpha
+                  );
 
-                  PlayerSettings.productName =
-                      "NFS Most Wanted VPREBORN";
+                  material.SetInt(
+                      "_ZWrite",
+                      0
+                  );
 
-                  PlayerSettings.bundleVersion =
-                      "1.0";
+                  material.DisableKeyword(
+                      "_ALPHATEST_ON"
+                  );
 
-                  PlayerSettings
-                      .SetApplicationIdentifier(
-                          BuildTargetGroup.iOS,
-                          "com.negel.nfsmw.vpreborn"
-                      );
+                  material.DisableKeyword(
+                      "_ALPHABLEND_ON"
+                  );
 
-                  PlayerSettings
-                      .SetScriptingBackend(
-                          BuildTargetGroup.iOS,
-                          ScriptingImplementation.IL2CPP
-                      );
+                  material.EnableKeyword(
+                      "_ALPHAPREMULTIPLY_ON"
+                  );
 
-                  PlayerSettings
-                      .SetApiCompatibilityLevel(
-                          BuildTargetGroup.iOS,
-                          ApiCompatibilityLevel.NET_4_6
-                      );
+                  material.renderQueue =
+                      3000;
+              }
 
-                  PlayerSettings
-                      .iOS
-                      .targetOSVersionString =
-                      "12.0";
-
-                  PlayerSettings
-                      .iOS
-                      .sdkVersion =
-                      iOSSdkVersion.DeviceSDK;
-
-                  PlayerSettings
-                      .iOS
-                      .appleEnableAutomaticSigning =
-                      false;
-
-                  PlayerSettings.stripEngineCode =
-                      false;
-
-                  PlayerSettings
-                      .SetManagedStrippingLevel(
-                          BuildTargetGroup.iOS,
-                          ManagedStrippingLevel.Disabled
-                      );
-
-                  PlayerSettings.colorSpace =
-                      ColorSpace.Gamma;
-
-                  PlayerSettings
-                      .defaultInterfaceOrientation =
-                      UIOrientation.LandscapeLeft;
-
-                  PlayerSettings
-                      .SetUseDefaultGraphicsAPIs(
-                          BuildTarget.iOS,
-                          false
-                      );
-
-                  PlayerSettings
-                      .SetGraphicsAPIs(
-                          BuildTarget.iOS,
-                          new[]
-                          {
-                              GraphicsDeviceType.Metal
-                          }
-                      );
-
-                  ApplyOriginalIcon();
-
-                  string[] allScenes =
+              private static void RepairScenes()
+              {
+                  string[] scenes =
                       AssetDatabase
                           .FindAssets(
                               "t:Scene"
@@ -1441,1029 +610,381 @@ jobs:
                                   .GUIDToAssetPath
                           )
                           .Where(
-                              p =>
-                                  p.EndsWith(
+                              x =>
+                                  x.EndsWith(
                                       ".unity",
                                       StringComparison
                                           .OrdinalIgnoreCase
                                   )
                           )
-                          .Distinct()
                           .ToArray();
 
-                  if (
-                      allScenes.Length ==
-                      0
-                  )
-                  {
-                      throw new Exception(
-                          "No recovered Unity scenes were found."
-                      );
-                  }
-
-                  string[] preferred =
-                  {
-                      "menuloadMW",
-                      "GaragMW",
-                      "MW"
-                  };
-
-                  var ordered =
-                      new List<string>();
-
                   foreach (
-                      string wanted
-                      in preferred
+                      string scenePath
+                      in scenes
                   )
                   {
-                      string match =
-                          allScenes
-                              .FirstOrDefault(
-                                  p =>
-                                      System.IO.Path
-                                          .GetFileNameWithoutExtension(
-                                              p
-                                          )
-                                          .Equals(
-                                              wanted,
-                                              StringComparison
-                                                  .OrdinalIgnoreCase
-                                          )
+                      Scene scene;
+
+                      try
+                      {
+                          scene =
+                              EditorSceneManager
+                                  .OpenScene(
+                                      scenePath,
+                                      OpenSceneMode.Single
+                                  );
+                      }
+                      catch (
+                          Exception ex
+                      )
+                      {
+                          Debug.LogWarning(
+                              "Could not open scene " +
+                              scenePath +
+                              ": " +
+                              ex.Message
+                          );
+
+                          continue;
+                      }
+
+                      bool changed =
+                          false;
+
+                      foreach (
+                          GameObject root
+                          in scene
+                              .GetRootGameObjects()
+                      )
+                      {
+                          Transform[] objects =
+                              root
+                                  .GetComponentsInChildren<
+                                      Transform
+                                  >(
+                                      true
+                                  );
+
+                          foreach (
+                              Transform t
+                              in objects
+                          )
+                          {
+                              GameObject go =
+                                  t.gameObject;
+
+                              if (
+                                  !LooksLikeDriveSurface(
+                                      go
+                                  )
+                              )
+                              {
+                                  continue;
+                              }
+
+                              Rigidbody body =
+                                  go.GetComponentInParent<
+                                      Rigidbody
+                                  >();
+
+                              if (body != null)
+                                  continue;
+
+                              Collider existing =
+                                  go.GetComponent<
+                                      Collider
+                                  >();
+
+                              if (
+                                  existing != null
+                              )
+                              {
+                                  if (
+                                      !existing.enabled
+                                  )
+                                  {
+                                      existing.enabled =
+                                          true;
+
+                                      collidersEnabled++;
+
+                                      changed =
+                                          true;
+                                  }
+
+                                  if (
+                                      existing.isTrigger
+                                  )
+                                  {
+                                      existing.isTrigger =
+                                          false;
+
+                                      changed =
+                                          true;
+                                  }
+
+                                  continue;
+                              }
+
+                              MeshFilter meshFilter =
+                                  go.GetComponent<
+                                      MeshFilter
+                                  >();
+
+                              if (
+                                  meshFilter == null ||
+                                  meshFilter.sharedMesh ==
+                                  null
+                              )
+                              {
+                                  continue;
+                              }
+
+                              MeshRenderer renderer =
+                                  go.GetComponent<
+                                      MeshRenderer
+                                  >();
+
+                              if (
+                                  renderer == null
+                              )
+                              {
+                                  continue;
+                              }
+
+                              MeshCollider collider =
+                                  go.AddComponent<
+                                      MeshCollider
+                                  >();
+
+                              collider.sharedMesh =
+                                  meshFilter.sharedMesh;
+
+                              collider.convex =
+                                  false;
+
+                              collider.isTrigger =
+                                  false;
+
+                              collidersAdded++;
+
+                              changed =
+                                  true;
+
+                              Debug.Log(
+                                  "Added road collider: " +
+                                  GetHierarchyPath(
+                                      t
+                                  )
+                              );
+                          }
+                      }
+
+                      if (changed)
+                      {
+                          EditorSceneManager
+                              .MarkSceneDirty(
+                                  scene
                               );
 
-                      if (
-                          !String.IsNullOrEmpty(
-                              match
-                          ) &&
-                          !ordered.Contains(
-                              match
-                          )
-                      )
-                      {
-                          ordered.Add(
-                              match
-                          );
+                          EditorSceneManager
+                              .SaveScene(
+                                  scene
+                              );
                       }
-                  }
-
-                  foreach (
-                      string scene
-                      in allScenes.OrderBy(
-                          x => x
-                      )
-                  )
-                  {
-                      if (
-                          !ordered.Contains(
-                              scene
-                          )
-                      )
-                      {
-                          ordered.Add(
-                              scene
-                          );
-                      }
-                  }
-
-                  var options =
-                      new BuildPlayerOptions
-                      {
-                          scenes =
-                              ordered.ToArray(),
-
-                          locationPathName =
-                              output,
-
-                          target =
-                              BuildTarget.iOS,
-
-                          options =
-                              BuildOptions.None
-                      };
-
-                  BuildReport report =
-                      BuildPipeline.BuildPlayer(
-                          options
-                      );
-
-                  BuildSummary summary =
-                      report.summary;
-
-                  Debug.Log(
-                      "NFS MW iOS build result: " +
-                      summary.result
-                  );
-
-                  if (
-                      summary.result !=
-                      BuildResult.Succeeded
-                  )
-                  {
-                      throw new Exception(
-                          "iOS Xcode export failed: " +
-                          summary.result
-                      );
                   }
               }
 
-              private static void ApplyOriginalIcon()
+              private static bool LooksLikeDriveSurface(
+                  GameObject go
+              )
               {
-                  const string iconPath =
-                      "Assets/NFSMWiOS/app_icon.png";
+                  string check =
+                      go.name
+                          .ToLowerInvariant();
 
-                  AssetDatabase.ImportAsset(
-                      iconPath,
-                      ImportAssetOptions
-                          .ForceSynchronousImport |
-                      ImportAssetOptions
-                          .ForceUpdate
-                  );
+                  Renderer renderer =
+                      go.GetComponent<
+                          Renderer
+                      >();
 
-                  var importer =
-                      AssetImporter.GetAtPath(
-                          iconPath
-                      ) as TextureImporter;
-
-                  if (
-                      importer != null
-                  )
+                  if (renderer != null)
                   {
-                      importer.textureType =
-                          TextureImporterType.Default;
+                      Material[] materials =
+                          renderer
+                              .sharedMaterials;
 
-                      importer.alphaIsTransparency =
-                          true;
+                      foreach (
+                          Material mat
+                          in materials
+                      )
+                      {
+                          if (mat == null)
+                              continue;
 
-                      importer.mipmapEnabled =
-                          false;
+                          check +=
+                              " " +
+                              mat.name
+                                  .ToLowerInvariant();
 
-                      importer.textureCompression =
-                          TextureImporterCompression
-                              .Uncompressed;
-
-                      importer.SaveAndReimport();
+                          if (
+                              mat.shader != null
+                          )
+                          {
+                              check +=
+                                  " " +
+                                  mat.shader.name
+                                      .ToLowerInvariant();
+                          }
+                      }
                   }
 
-                  Texture2D icon =
-                      AssetDatabase.LoadAssetAtPath<
-                          Texture2D
-                      >(
-                          iconPath
-                      );
+                  string[] words =
+                  {
+                      "road",
+                      "asphalt",
+                      "street",
+                      "highway",
+                      "ground",
+                      "track",
+                      "floor",
+                      "pavement"
+                  };
 
-                  if (
-                      icon ==
-                      null
-                  )
-                      return;
-
-                  int[] sizes =
-                      PlayerSettings
-                          .GetIconSizesForTargetGroup(
-                              BuildTargetGroup.iOS
-                          );
-
-                  Texture2D[] icons =
-                      new Texture2D[
-                          sizes.Length
-                      ];
-
-                  for (
-                      int i = 0;
-                      i < icons.Length;
-                      i++
+                  foreach (
+                      string word
+                      in words
                   )
                   {
-                      icons[i] =
-                          icon;
+                      if (
+                          check.Contains(
+                              word
+                          )
+                      )
+                      {
+                          return true;
+                      }
                   }
 
-                  PlayerSettings
-                      .SetIconsForTargetGroup(
-                          BuildTargetGroup.iOS,
-                          icons
-                      );
+                  return false;
+              }
+
+              private static string GetHierarchyPath(
+                  Transform transform
+              )
+              {
+                  string path =
+                      transform.name;
+
+                  Transform parent =
+                      transform.parent;
+
+                  while (
+                      parent != null
+                  )
+                  {
+                      path =
+                          parent.name +
+                          "/" +
+                          path;
+
+                      parent =
+                          parent.parent;
+                  }
+
+                  return path;
+              }
+
+              private static bool Contains(
+                  string value,
+                  string part
+              )
+              {
+                  if (
+                      String.IsNullOrEmpty(
+                          value
+                      )
+                  )
+                  {
+                      return false;
+                  }
+
+                  return value.IndexOf(
+                      part,
+                      StringComparison
+                          .OrdinalIgnoreCase
+                  ) >= 0;
               }
           }
           CS
 
-      - name: Install official Unity CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          export \
-            UNITY_CLI_HOME="$WORK/tools/unity-official-cli"
-
-          export \
-            UNITY_CLI_CHANNEL="beta"
-
-          export \
-            UNITY_NON_INTERACTIVE=1
-
-          export \
-            UNITY_NO_CONSENT_PROMPT=1
-
-          export \
-            UNITY_NO_UPDATE_CHECK=1
-
-          mkdir -p \
-            "$UNITY_CLI_HOME"
-
-          curl -fsSL \
-            --retry 5 \
-            --retry-delay 3 \
-            https://public-cdn.cloud.unity3d.com/hub/prod/cli/install.sh \
-            -o "$WORK/unity-cli-install.sh"
-
-          bash \
-            "$WORK/unity-cli-install.sh"
-
-          OFFICIAL="$UNITY_CLI_HOME/bin/unity"
-
-          test -x "$OFFICIAL"
-
           echo \
-            "OFFICIAL_UNITY_CLI=$OFFICIAL" \
-            >> "$GITHUB_ENV"
-
-      - name: Install Unity 2019.4.40f1 and iOS support
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          INSTALL_ROOT="$HOME/UnityEditors"
-
-          mkdir -p \
-            "$INSTALL_ROOT"
-
-          export \
-            UNITY_NON_INTERACTIVE=1
-
-          export \
-            UNITY_NO_CONSENT_PROMPT=1
-
-          export \
-            UNITY_NO_UPDATE_CHECK=1
-
-          "$OFFICIAL_UNITY_CLI" \
-            --non-interactive \
-            --no-banner \
-            --no-color \
-            editors install-path \
-            --set "$INSTALL_ROOT"
-
-          timeout 80m \
-            "$OFFICIAL_UNITY_CLI" \
-            --non-interactive \
-            --no-banner \
-            --no-color \
-            install "$BUILD_UNITY" \
-            --changeset "$BUILD_CHANGESET" \
-            --module ios \
-            --no-child-modules \
-            --yes \
-            --accept-eula \
-            2>&1 \
-            | tee \
-              "$OUTPUT/unity-2019-install.log"
-
-          UNITY2019="$(
-            find "$INSTALL_ROOT" \
-              -type f \
-              -path '*/Editor/Unity' \
-              -perm -111 \
-              -print \
-              | grep \
-                '2019.4.40f1' \
-              | head -1
-          )"
-
-          if [ -z "${UNITY2019:-}" ]; then
-            UNITY2019="$(
-              find "$INSTALL_ROOT" \
-                -type f \
-                -path '*/Editor/Unity' \
-                -perm -111 \
-                -print \
-                | head -1
-            )"
-          fi
-
-          test -n "$UNITY2019"
-
-          echo \
-            "UNITY2019=$UNITY2019" \
-            >> "$GITHUB_ENV"
-
-      - name: Unity 2019 warm-up import and repair
-        shell: bash
-        run: |
-          set +e
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          WARMUP_LOG="$OUTPUT/unity-2019-warmup.log"
-
-          rm -rf \
-            "$PROJECT/Library" \
-            "$PROJECT/Temp" \
-            "$PROJECT/obj" \
-            2>/dev/null || true
-
-          timeout 75m \
-            xvfb-run -a \
-            "$UNITY2019" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -accept-apiupdate \
-            -projectPath "$PROJECT" \
-            -buildTarget iOS \
-            -logFile "$WARMUP_LOG"
-
-          RC=$?
-
-          echo \
-            "UNITY2019_WARMUP_EXIT_CODE=$RC" \
-            | tee \
-              "$OUTPUT/unity-2019-warmup-exit-code.txt"
-
-          set -e
+            "===== PATCH BUILD SCRIPT TO RUN v3.7 REPAIR ====="
 
           python3 - <<'PY'
           import os
-          import re
           from pathlib import Path
 
           project = Path(
               os.environ["PROJECT"]
           )
 
-          assets = project / "Assets"
-
-          using_rx = re.compile(
-              r'(?m)^[\ufeff \t]*using[ \t]+UnityScript'
-              r'(?:\.[A-Za-z_][A-Za-z0-9_.]*)?'
-              r'[ \t]*;[ \t]*(?:\r?\n|$)'
+          build = (
+              project /
+              "Assets" /
+              "NFSMWiOS" /
+              "Editor" /
+              "NFSMWiOSBuild.cs"
           )
 
-          for p in assets.rglob(
-              "*.cs"
-          ):
+          text = build.read_text(
+              encoding="utf-8"
+          )
 
-              s = p.read_text(
-                  encoding="utf-8",
-                  errors="replace"
+          if (
+              "NFSMWGraphicsRepair.Run();" not in text
+          ):
+              needle = (
+                  "                  ApplyOriginalIcon();"
               )
 
-              fixed = using_rx.sub(
-                  "",
-                  s
+              replacement = (
+                  "                  NFSMWGraphicsRepair.Run();\n\n"
+                  "                  ApplyOriginalIcon();"
               )
 
-              if fixed != s:
-                  p.write_text(
-                      fixed,
-                      encoding="utf-8"
+              if needle not in text:
+                  raise SystemExit(
+                      "Could not find ApplyOriginalIcon() in build script"
                   )
 
-          for name in (
-              "RCC_CameraConfig.cs",
-              "RCC_GetBounds.cs",
-          ):
+              text = text.replace(
+                  needle,
+                  replacement,
+                  1
+              )
 
-              for p in assets.rglob(
-                  name
-              ):
+              build.write_text(
+                  text,
+                  encoding="utf-8"
+              )
 
-                  s = p.read_text(
-                      encoding="utf-8",
-                      errors="replace"
-                  )
-
-                  fixed = re.sub(
-                      r'\bParticleRenderer\b',
-                      'ParticleSystemRenderer',
-                      s
-                  )
-
-                  if fixed != s:
-                      p.write_text(
-                          fixed,
-                          encoding="utf-8"
-                      )
+          print(
+              "NFSMWGraphicsRepair.Run() installed"
+          )
           PY
 
-          rm -rf \
-            "$PROJECT/Library/ScriptAssemblies" \
-            "$PROJECT/Temp" \
-            "$PROJECT/obj" \
-            2>/dev/null || true
-
-      - name: v3.6 final compile audit
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          if grep -RIn \
-            --include='*.cs' \
-            -E '^[[:space:]]*using[[:space:]]+UnityScript' \
-            "$PROJECT/Assets"
-          then
-            echo "::error::UnityScript using directive remains."
-            exit 1
-          fi
-
-          if grep -RIn \
-            --include='*.cs' \
-            '\bParticleRenderer\b' \
-            "$PROJECT/Assets/Scripts/Assembly-CSharp"
-          then
-            echo "::error::ParticleRenderer remains."
-            exit 1
-          fi
+          echo \
+            "===== VERIFY REPAIR SCRIPT ====="
 
           grep -n \
-            'System.IO.Path' \
+            'DummyShaderTextExporter\|RepairMaterials\|RepairScenes' \
+            "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWGraphicsRepair.cs"
+
+          grep -n \
+            'NFSMWGraphicsRepair.Run' \
             "$PROJECT/Assets/NFSMWiOS/Editor/NFSMWiOSBuild.cs"
 
           echo \
-            "v3.6 final compile audit: CLEAN"
-
-      - name: Build NFS Most Wanted iOS Xcode project
-        id: unity_build
-        shell: bash
-        env:
-          NFS_IOS_XCODE_PATH: ${{ github.workspace }}/nfs-build/iOS/NFSMW-VPREBORN-iOS
-        run: |
-          set +e
-
-          PROJECT="${{ steps.recover.outputs.project }}"
-
-          LOG="$OUTPUT/unity-2019-ios-build.log"
-
-          timeout 100m \
-            xvfb-run -a \
-            "$UNITY2019" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -projectPath "$PROJECT" \
-            -buildTarget iOS \
-            -executeMethod \
-              NFSMWiOSBuild.PerformBuild \
-            -logFile "$LOG"
-
-          RC=$?
-
-          echo \
-            "UNITY2019_EXIT_CODE=$RC"
-
-          tail -500 \
-            "$LOG" \
-            || true
-
-          exit "$RC"
-
-      - name: Detect Xcode project
-        id: detect_xcode
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          READY=false
-
-          if [ -d "$XCODE_OUT" ] && \
-             find "$XCODE_OUT" \
-               -maxdepth 3 \
-               \( \
-                 -name '*.xcodeproj' \
-                 -o -name '*.xcworkspace' \
-               \) \
-               | grep -q .
-          then
-            READY=true
-          fi
-
-          echo \
-            "ready=$READY" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Pack Xcode project
-        if: steps.detect_xcode.outputs.ready == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          tar \
-            -C "$(dirname "$XCODE_OUT")" \
-            -czf \
-              "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.6-Xcode.tar.gz" \
-            "$(basename "$XCODE_OUT")"
-
-      - name: Collect Unity diagnostics
-        if: always()
-        shell: bash
-        run: |
-          set +e
-
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.6-Diagnostics"
-
-          rm -rf "$DIAG"
-          mkdir -p "$DIAG"
-
-          cp \
-            "$OUTPUT/unity-2019-ios-build.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-warmup.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/unity-2019-install.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$OUTPUT/assetripper.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.6-Diagnostics.zip" \
-            "$DIAG"
-
-      - name: Upload NFS diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NFS-MW-VPREBORN-iOS-v3.6-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.6-Diagnostics.zip
-          compression-level: 0
-
-      - name: Upload Xcode project
-        if: steps.detect_xcode.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: NFS-MW-VPREBORN-iOS-v3.6-Xcode
-          path: NFS-MW-VPREBORN-iOS-v3.6-Xcode.tar.gz
-          compression-level: 0
-
-      - name: Fail clearly if Unity did not export Xcode
-        if: steps.detect_xcode.outputs.ready != 'true'
-        shell: bash
-        run: |
-          echo \
-            "::error::Unity did not generate Xcode project."
-
-          exit 1
-
-
-  xcode_build:
-    name: 2. Build unsigned IPA on macOS
-    needs: recover_and_export
-    if: needs.recover_and_export.outputs.xcode_ready == 'true'
-    runs-on: macos-15
-    timeout-minutes: 120
-
-    steps:
-      - name: Download Xcode project
-        uses: actions/download-artifact@v4
-        with:
-          name: NFS-MW-VPREBORN-iOS-v3.6-Xcode
-          path: xcode-artifact
-
-      - name: Extract Xcode project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p \
-            xcode
-
-          tar \
-            -xzf \
-              xcode-artifact/NFS-MW-VPREBORN-iOS-v3.6-Xcode.tar.gz \
-            -C \
-              xcode
-
-          find xcode \
-            -maxdepth 4 \
-            \( \
-              -name '*.xcodeproj' \
-              -o -name '*.xcworkspace' \
-            \) \
-            -print
-
-      - name: Patch project for Xcode 16 and remove old ARM flags
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo \
-            "===== XCODE VERSION ====="
-
-          xcodebuild \
-            -version
-
-          echo \
-            "===== SEARCH OLD -mno-thumb BEFORE PATCH ====="
-
-          grep -RIn \
-            -- '-mno-thumb' \
-            xcode \
-            || true
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          root = Path("xcode")
-
-          changed = []
-
-          for p in root.rglob("*"):
-
-              if not p.is_file():
-                  continue
-
-              if not (
-                  p.name == "project.pbxproj"
-                  or
-                  p.suffix == ".xcconfig"
-              ):
-                  continue
-
-              try:
-                  s = p.read_text(
-                      encoding="utf-8"
-                  )
-              except UnicodeDecodeError:
-                  continue
-
-              old = s
-
-              count = s.count(
-                  "-mno-thumb"
-              )
-
-              if count:
-                  print(
-                      "Removing",
-                      count,
-                      "x -mno-thumb from",
-                      p
-                  )
-
-                  s = s.replace(
-                      "-mno-thumb",
-                      ""
-                  )
-
-              s = s.replace(
-                  "IPHONEOS_DEPLOYMENT_TARGET = 8.0;",
-                  "IPHONEOS_DEPLOYMENT_TARGET = 12.0;"
-              )
-
-              s = s.replace(
-                  "ENABLE_BITCODE = YES;",
-                  "ENABLE_BITCODE = NO;"
-              )
-
-              if s != old:
-
-                  p.write_text(
-                      s,
-                      encoding="utf-8"
-                  )
-
-                  changed.append(
-                      str(p)
-                  )
-
-          print(
-              "Patched Xcode files:",
-              len(changed)
-          )
-
-          for p in changed:
-              print(
-                  "  ",
-                  p
-              )
-          PY
-
-          echo \
-            "===== SEARCH OLD -mno-thumb AFTER PATCH ====="
-
-          if grep -RIn \
-            -- '-mno-thumb' \
-            xcode
-          then
-            echo \
-              "::error::-mno-thumb still exists after Xcode patch."
-
-            exit 1
-          fi
-
-          echo \
-            "-mno-thumb audit: CLEAN"
-
-          PBX="$(
-            find xcode \
-              -type f \
-              -path '*/project.pbxproj' \
-              -print \
-              | head -1
-          )"
-
-          if [ -z "$PBX" ]; then
-            echo \
-              "::error::project.pbxproj not found."
-
-            exit 1
-          fi
-
-          python3 \
-            - "$PBX" \
-            <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          p = pathlib.Path(
-              sys.argv[1]
-          )
-
-          s = p.read_text(
-              encoding="utf-8",
-              errors="ignore"
-          )
-
-          s = re.sub(
-              r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
-              'IPHONEOS_DEPLOYMENT_TARGET = 12.0;',
-              s
-          )
-
-          s = re.sub(
-              r'ENABLE_BITCODE = [^;]+;',
-              'ENABLE_BITCODE = NO;',
-              s
-          )
-
-          s = re.sub(
-              r'CODE_SIGN_STYLE = [^;]+;',
-              'CODE_SIGN_STYLE = Manual;',
-              s
-          )
-
-          s = s.replace(
-              '-mno-thumb',
-              ''
-          )
-
-          p.write_text(
-              s,
-              encoding="utf-8"
-          )
-          PY
-
-          if grep -RIn \
-            -- '-mno-thumb' \
-            xcode
-          then
-            echo \
-              "::error::-mno-thumb returned after PBX patch."
-
-            exit 1
-          fi
-
-          echo \
-            "Xcode 16 legacy ARM flag repair: CLEAN"
-
-      - name: Build unsigned app
-        shell: bash
-        run: |
-          set +e
-
-          mkdir -p \
-            "$GITHUB_WORKSPACE/xcode-output"
-
-          WORKSPACE="$(
-            find xcode \
-              -type d \
-              -name '*.xcworkspace' \
-              -print \
-              | head -1
-          )"
-
-          PROJECT="$(
-            find xcode \
-              -type d \
-              -name '*.xcodeproj' \
-              -print \
-              | head -1
-          )"
-
-          echo \
-            "===== FINAL FLAG CHECK BEFORE XCODEBUILD ====="
-
-          if grep -RIn \
-            -- '-mno-thumb' \
-            xcode
-          then
-            echo \
-              "::error::Legacy -mno-thumb flag still exists."
-
-            exit 1
-          fi
-
-          echo \
-            "No -mno-thumb flags remain."
-
-          COMMON=(
-            -scheme Unity-iPhone
-            -configuration Release
-            -sdk iphoneos
-            -derivedDataPath "$GITHUB_WORKSPACE/DerivedData"
-
-            CODE_SIGNING_ALLOWED=NO
-            CODE_SIGNING_REQUIRED=NO
-            CODE_SIGN_IDENTITY=
-            DEVELOPMENT_TEAM=
-            ENABLE_BITCODE=NO
-            IPHONEOS_DEPLOYMENT_TARGET=12.0
-          )
-
-          if [ -n "${WORKSPACE:-}" ]; then
-
-            echo \
-              "Building workspace: $WORKSPACE"
-
-            xcodebuild \
-              -workspace "$WORKSPACE" \
-              "${COMMON[@]}" \
-              build \
-              2>&1 \
-              | tee \
-                "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
-
-            RC=${PIPESTATUS[0]}
-
-          elif [ -n "${PROJECT:-}" ]; then
-
-            echo \
-              "Building project: $PROJECT"
-
-            xcodebuild \
-              -project "$PROJECT" \
-              "${COMMON[@]}" \
-              build \
-              2>&1 \
-              | tee \
-                "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log"
-
-            RC=${PIPESTATUS[0]}
-
-          else
-
-            echo \
-              "::error::No Xcode workspace/project found."
-
-            RC=1
-          fi
-
-          echo \
-            "XCODEBUILD_EXIT_CODE=$RC" \
-            | tee \
-              "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt"
-
-          echo \
-            "===== XCODE LOG ERRORS ====="
-
-          grep -nEi \
-            -A 12 \
-            -B 6 \
-            'error:|fatal error:|BUILD FAILED|undefined symbols|linker command failed|unsupported option' \
-            "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" \
-            | tail -1200 \
-            || true
-
-          exit "$RC"
-
-      - name: Package unsigned IPA
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP="$(
-            find "$GITHUB_WORKSPACE/DerivedData" \
-              -type d \
-              -path \
-                '*Build/Products/Release-iphoneos/*.app' \
-              -print \
-              | head -1
-          )"
-
-          if [ -z "$APP" ]; then
-
-            echo \
-              "::error::Built .app was not found."
-
-            find \
-              "$GITHUB_WORKSPACE/DerivedData" \
-              -maxdepth 8 \
-              -type d \
-              -name '*.app' \
-              -print
-
-            exit 1
-          fi
-
-          echo \
-            "Built app: $APP"
-
-          du -sh \
-            "$APP"
-
-          rm -rf \
-            Payload
-
-          mkdir -p \
-            Payload
-
-          cp -R \
-            "$APP" \
-            Payload/
-
-          zip -qry \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.6-unsigned.ipa" \
-            Payload
-
-          ls -lh \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.6-unsigned.ipa"
-
-      - name: Collect Xcode diagnostics
-        if: always()
-        shell: bash
-        run: |
-          set +e
-
-          DIAG="$GITHUB_WORKSPACE/NFS-MW-v3.6-Xcode-Diagnostics"
-
-          rm -rf "$DIAG"
-          mkdir -p "$DIAG"
-
-          cp \
-            "$GITHUB_WORKSPACE/xcode-output/xcodebuild.log" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          cp \
-            "$GITHUB_WORKSPACE/xcode-output/xcode-exit-code.txt" \
-            "$DIAG/" \
-            2>/dev/null || true
-
-          grep -RIn \
-            -- '-mno-thumb' \
-            xcode \
-            > "$DIAG/mno-thumb-leftovers.txt" \
-            2>&1 || true
-
-          xcodebuild \
-            -version \
-            > "$DIAG/xcode-version.txt" \
-            2>&1 || true
-
-          sw_vers \
-            > "$DIAG/macos-version.txt" \
-            2>&1 || true
-
-          zip -qr \
-            "$GITHUB_WORKSPACE/NFS-MW-VPREBORN-iOS-v3.6-Xcode-Diagnostics.zip" \
-            "$DIAG"
-
-      - name: Upload unsigned IPA
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NFS-MW-VPREBORN-iOS-v3.6-unsigned-IPA
-          path: NFS-MW-VPREBORN-iOS-v3.6-unsigned.ipa
-          if-no-files-found: error
-          compression-level: 0
-
-      - name: Upload Xcode diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NFS-MW-VPREBORN-iOS-v3.6-Xcode-Diagnostics
-          path: NFS-MW-VPREBORN-iOS-v3.6-Xcode-Diagnostics.zip
-          if-no-files-found: warn
-          compression-level: 0
+            "v3.7 graphics/collision repair installed"
